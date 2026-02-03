@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.env
+
+# Build artifacts
+build/
+dist/
+*.spec
+*.exe
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Test data (contains sensitive employee info)
+test data/
+*.xlsx
+!requirements.txt
+
+# Claude
+.claude/
+
+# Misc
+nul
+*.log
+.DS_Store
+Thumbs.db
