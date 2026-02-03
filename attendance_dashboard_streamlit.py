@@ -1,7 +1,7 @@
 """
 Attendance Dashboard Streamlit Web Application v2.2
 Web-based attendance processing with Streamlit interface
-Based on the desktop CTk application
+EXACT REPLICA of desktop version report generation
 """
 
 import streamlit as st
@@ -13,7 +13,6 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from datetime import datetime, timedelta
 import io
 import re
-import logging
 
 
 def read_excel_file(file_obj, filename):
@@ -25,12 +24,18 @@ def read_excel_file(file_obj, filename):
         return pd.read_excel(file_obj)
 
 
-# Default configuration
+# Default configuration - EXACT MATCH with desktop version
 DEFAULT_CONFIG = {
     'work_start_time': '12:00 PM',
     'work_end_time': '9:00 PM',
     'late_threshold': '12:00 PM',
     'off_days': [4],  # Friday
+    'alert_thresholds': {
+        'high_absences': 3,
+        'frequent_late': 5,
+        'missing_punches': 5,
+        'low_attendance_rate': 75.0
+    },
     'penalties': {
         'late_1st': 100,
         'late_2nd': 200,
@@ -47,10 +52,10 @@ DEFAULT_CONFIG = {
 
 
 class AttendanceProcessor:
-    """Core attendance processing logic (shared with desktop version)"""
+    """Core attendance processing logic - EXACT REPLICA of desktop version"""
 
     def __init__(self, config=None):
-        self.config = config or DEFAULT_CONFIG
+        self.config = config or DEFAULT_CONFIG.copy()
         self.employee_mapping = {}
         self.leave_records = []
         self.processed_data = []
@@ -80,17 +85,14 @@ class AttendanceProcessor:
         """Find column by search terms or exact matches"""
         columns = df.columns.tolist()
 
-        # First try exact matches
         if exact_matches:
             for exact in exact_matches:
                 if exact in columns:
                     return exact
-                # Try case-insensitive
                 for col in columns:
                     if str(col).lower().strip() == exact.lower().strip():
                         return col
 
-        # Then try partial matches
         for col in columns:
             col_lower = str(col).lower()
             if any(term in col_lower for term in search_terms):
@@ -99,12 +101,12 @@ class AttendanceProcessor:
         return None
 
     def load_master_data(self, file_obj, filename):
-        """Load and process master data file"""
+        """Load and process master data file - EXACT MATCH with desktop"""
         try:
             self.log_message("Loading master data...")
             df = read_excel_file(file_obj, filename)
 
-            # Find columns
+            # Find columns - EXACT SAME LOGIC
             ac_col = self.find_column(df, ['ac', 'no'], ['AC-No.', 'Ac-No.', 'AC No', 'PS ID', 'PS Id', 'PSID'])
             if not ac_col:
                 ac_col = self.find_column(df, ['ps', 'id'], ['PS ID', 'PS Id', 'PSID'])
@@ -129,7 +131,7 @@ class AttendanceProcessor:
                                                  ['Join Date', 'Joining Date', 'Date of Joining', 'JoinDate',
                                                   'Hire Date', 'HireDate', 'Date Joined', 'DOJ'])
 
-            # Exit Date column - for resigned employees
+            # Exit Date column
             exit_date_col = None
             for col in df.columns:
                 col_clean = str(col).replace('\n', ' ').lower().strip()
@@ -146,9 +148,7 @@ class AttendanceProcessor:
             for idx, row in df.iterrows():
                 ac_no = self.normalize_id(row[ac_col]) if ac_col else ""
                 if ac_no and ac_no != 'nan':
-                    # Handle join date
                     join_date_val = self._parse_date_field(row, join_date_col)
-                    # Handle exit date
                     exit_date_val = self._parse_date_field(row, exit_date_col)
 
                     self.employee_mapping[ac_no] = {
@@ -307,7 +307,7 @@ class AttendanceProcessor:
         return None
 
     def determine_status(self, clock_in, clock_out, date, crm):
-        """Determine attendance status"""
+        """Determine attendance status - EXACT MATCH with desktop"""
         day_of_week = date.weekday()
 
         # Check if employee has resigned
@@ -389,7 +389,6 @@ class AttendanceProcessor:
                 df = read_excel_file(file_obj, filename)
                 file_date = self.extract_date_from_filename(filename)
 
-                # Find columns
                 ac_col = self.find_column(df, ['ac', 'no'], ['AC-No.', 'Ac-No.', 'AC No'])
                 name_col = self.find_column(df, ['name'], ['Name'])
                 date_col = self.find_column(df, ['date'], ['Date'])
@@ -413,7 +412,6 @@ class AttendanceProcessor:
 
                     emp_info = filtered_mapping.get(ac_no)
                     if not emp_info:
-                        # Try name match
                         if name_col and pd.notna(row[name_col]):
                             row_name = str(row[name_col]).strip().lower()
                             for key, info in filtered_mapping.items():
@@ -457,7 +455,7 @@ class AttendanceProcessor:
         self.log_message(f"Total records processed: {len(self.processed_data)}", 'success')
 
     def fill_leave_records(self, selected_depts=None, selected_crms=None):
-        """Apply leave records to attendance data"""
+        """Apply leave records to attendance data - EXACT MATCH with desktop"""
         self.log_message("Applying leave records...")
         off_days = self.config.get('off_days', [4])
 
@@ -547,17 +545,8 @@ class AttendanceProcessor:
             self.log_message(f"Detected {len(self.conflict_records)} leave vs attendance conflicts", 'warning')
 
     def calculate_penalties(self):
-        """Calculate penalties for all employees"""
+        """Calculate penalties for all employees - builds penalties_data for Penalties sheet"""
         penalties_config = self.config.get('penalties', {})
-        late_rates = [
-            penalties_config.get('late_1st', 100),
-            penalties_config.get('late_2nd', 200),
-            penalties_config.get('late_3rd', 500),
-            penalties_config.get('late_4th_plus', 500)
-        ]
-        missing_threshold = penalties_config.get('missing_punch_threshold', 3)
-        missing_deduction = penalties_config.get('missing_punch_deduction', 0.5)
-        absence_deduction = penalties_config.get('absence_deduction', 2)
 
         employee_stats = {}
         for record in self.processed_data:
@@ -568,6 +557,7 @@ class AttendanceProcessor:
                         employee_stats[crm] = {
                             'name': info['name'],
                             'department': info['department'],
+                            'position': info['position'],
                             'national_id': info.get('national_id', ''),
                             'vendor': info.get('vendor', ''),
                             'ps_id': info.get('ps_id', ''),
@@ -581,6 +571,7 @@ class AttendanceProcessor:
                     employee_stats[crm] = {
                         'name': record['name'],
                         'department': record.get('department', ''),
+                        'position': record.get('position', ''),
                         'national_id': '',
                         'vendor': '',
                         'ps_id': '',
@@ -601,35 +592,17 @@ class AttendanceProcessor:
             missing_count = sum(1 for r in stats['records'] if 'Missing Punch' in r['status'])
             absence_count = sum(1 for r in stats['records'] if r['status'] == 'Absent')
 
-            late_penalty = 0
-            for i in range(late_count):
-                if i < 3:
-                    late_penalty += late_rates[i]
-                else:
-                    late_penalty += late_rates[3]
-
-            missing_ded = max(0, (missing_count - missing_threshold) * missing_deduction)
-            absence_ded = absence_count * absence_deduction
-            total_penalty = late_penalty
-            total_deduction = missing_ded + absence_ded
-            total_warnings = 1 if late_count >= 3 else 0
-
             penalties_summary[crm] = {
                 'name': stats['name'],
                 'department': stats.get('department', ''),
+                'position': stats.get('position', ''),
                 'national_id': stats.get('national_id', ''),
                 'vendor': stats.get('vendor', ''),
                 'ps_id': stats.get('ps_id', ''),
                 'join_date': stats.get('join_date', ''),
                 'late_count': late_count,
-                'late_penalty': late_penalty,
                 'missing_punch_count': missing_count,
-                'missing_deduction': missing_ded,
                 'absence_count': absence_count,
-                'absence_deduction': absence_ded,
-                'total_penalty_egp': total_penalty,
-                'total_deduction_days': total_deduction,
-                'total_warnings': total_warnings,
                 'working_days': stats['working_days'],
                 'total_days': stats['total_days']
             }
@@ -638,7 +611,7 @@ class AttendanceProcessor:
         return penalties_summary
 
     def create_excel_report(self):
-        """Create the final Excel report and return as bytes"""
+        """Create the final Excel report - EXACT MATCH with desktop version"""
         wb = openpyxl.Workbook()
         wb.remove(wb.active)
 
@@ -655,7 +628,7 @@ class AttendanceProcessor:
         return output.getvalue()
 
     def _apply_status_color(self, cell, status):
-        """Apply color coding to a cell based on status"""
+        """Apply color coding - EXACT MATCH with desktop version"""
         if '(BD)' in status:
             cell.fill = PatternFill(start_color='E1D5E7', end_color='E1D5E7', fill_type='solid')
         elif status in ['Normal', 'Present', 'Late (Approved)', 'Annual Leave', 'Casual Leave',
@@ -682,7 +655,7 @@ class AttendanceProcessor:
             cell.fill = PatternFill(start_color='E6F3FF', end_color='E6F3FF', fill_type='solid')
 
     def create_summary_sheet(self, wb):
-        """Create the summary report sheet"""
+        """Create summary sheet - EXACT MATCH with desktop version"""
         ws = wb.create_sheet("Summary Report", 0)
 
         crms = sorted(set(r['crm'] for r in self.processed_data))
@@ -698,14 +671,15 @@ class AttendanceProcessor:
         else:
             dates = sorted(set(r['date'] for r in self.processed_data))
 
+        # Build matrix
         matrix = {crm: {date: '' for date in dates} for crm in crms}
         for record in self.processed_data:
             matrix[record['crm']][record['date']] = record['status']
 
-        # Title
+        # Title - EXACT MATCH
         ws.merge_cells('A1:' + get_column_letter(len(dates) + 3) + '1')
         title_cell = ws['A1']
-        title_cell.value = "Attendance Summary Report"
+        title_cell.value = "📊 Enhanced Attendance Summary Report"
         title_cell.font = Font(name='Calibri', size=16, bold=True, color='FFFFFF')
         title_cell.fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
         title_cell.alignment = Alignment(horizontal='center', vertical='center')
@@ -732,7 +706,7 @@ class AttendanceProcessor:
 
         off_days = self.config.get('off_days', [4])
 
-        # Justification options
+        # Justification options - EXACT MATCH
         justification_options = [
             "Normal", "Late (Approved)", "Late", "Absent", "Missing Punch In",
             "Missing Punch In (Justified)", "Missing Punch Out", "Missing Punch Out (Justified)",
@@ -752,29 +726,49 @@ class AttendanceProcessor:
             allow_blank=True,
             showDropDown=False
         )
+        dv.error = "Please select a valid justification from the list"
+        dv.errorTitle = "Invalid Entry"
+        dv.prompt = "Select attendance status/justification"
+        dv.promptTitle = "Attendance Status"
         ws.add_data_validation(dv)
 
-        # Data rows
-        data_row = 4
+        # Data rows - EXACT MATCH with desktop logic
+        row = 4
+        first_data_row = row
         for crm in crms:
-            ws.cell(data_row, 1, crm)
+            ws.cell(row, 1, crm)
 
-            normal_count = sum(1 for d in dates if matrix[crm].get(d) == 'Normal')
-            abnormal_count = sum(1 for d in dates
-                                 if matrix[crm].get(d) and matrix[crm].get(d) not in ['Normal', 'Weekend', 'Resigned'])
-
-            ws.cell(data_row, 2, normal_count)
-            ws.cell(data_row, 3, abnormal_count)
+            # Count normal days - EXACT SAME LOGIC as desktop
+            normal_statuses = ['Normal', 'Present', 'Weekend', 'Worked on Day Off', 'Late (Approved)',
+                               'Annual Leave', 'Casual Leave', 'Marriage Leave', 'Paternity Leave',
+                               'Maternity Leave', 'Bereavement Leave', 'Military Call Leave',
+                               'Early Departure (Approved)']
+            normal_count = 0
+            for d in dates:
+                if d.weekday() in off_days:
+                    normal_count += 1
+                else:
+                    status = matrix[crm].get(d, '')
+                    if status in normal_statuses:
+                        normal_count += 1
+            ws.cell(row, 2, normal_count)
+            ws.cell(row, 3, len(dates) - normal_count)
 
             for i, date in enumerate(dates, start=4):
-                cell = ws.cell(data_row, i)
                 status = matrix[crm].get(date, '')
+                day_of_week = date.weekday()
 
-                if not status and date.weekday() in off_days:
-                    status = 'Weekend'
-                    matrix[crm][date] = status
+                # Friday always Weekend - EXACT MATCH
+                if day_of_week in off_days:
+                    status = "Weekend"
+                elif not status:
+                    status = "Absent"
 
-                cell.value = status
+                # Map old values
+                status_mapping = {'Present': 'Normal'}
+                status = status_mapping.get(status, status)
+
+                cell = ws.cell(row, i, status)
                 self._apply_status_color(cell, status)
                 cell.alignment = Alignment(horizontal='center', vertical='center')
                 cell.border = Border(
@@ -782,20 +776,25 @@ class AttendanceProcessor:
                     top=Side(style='thin'), bottom=Side(style='thin')
                 )
 
-                if status not in ['Weekend', 'Resigned', '']:
-                    dv.add(cell)
+            row += 1
 
-            data_row += 1
+        last_data_row = row - 1
+
+        # Apply data validation
+        if dates and crms:
+            first_date_col = get_column_letter(4)
+            last_date_col = get_column_letter(len(dates) + 3)
+            dv.add(f"{first_date_col}{first_data_row}:{last_date_col}{last_data_row}")
 
         # Column widths
-        ws.column_dimensions['A'].width = 15
-        ws.column_dimensions['B'].width = 12
-        ws.column_dimensions['C'].width = 14
+        ws.column_dimensions['A'].width = 20
+        ws.column_dimensions['B'].width = 15
+        ws.column_dimensions['C'].width = 15
         for i in range(4, len(dates) + 4):
-            ws.column_dimensions[get_column_letter(i)].width = 10
+            ws.column_dimensions[get_column_letter(i)].width = 18
 
     def create_analytics_sheet(self, wb):
-        """Create individual analytics sheet"""
+        """Create analytics sheet - EXACT MATCH with desktop version"""
         ws = wb.create_sheet("Individual Analytics", 1)
 
         analytics = {}
@@ -808,132 +807,435 @@ class AttendanceProcessor:
             missing = sum(1 for r in records if 'Missing Punch' in r['status'])
 
             analytics[crm] = {
-                'name': records[0]['name'] if records else '',
-                'department': records[0].get('department', '') if records else '',
+                'name': records[0]['name'],
+                'dept': records[0].get('department', ''),
+                'position': records[0].get('position', ''),
                 'total': total,
                 'normal': normal,
                 'late': late,
                 'absent': absent,
                 'missing': missing,
-                'attendance_rate': (normal / total * 100) if total > 0 else 0
+                'attendance_rate': round((total - absent) / total * 100, 1) if total > 0 else 0,
+                'punctuality_rate': round(normal / total * 100, 1) if total > 0 else 0
             }
 
-        # Title
-        ws.merge_cells('A1:H1')
-        title = ws['A1']
-        title.value = "Individual Analytics"
-        title.font = Font(size=14, bold=True, color='FFFFFF')
-        title.fill = PatternFill(start_color='2E7D32', end_color='2E7D32', fill_type='solid')
-        title.alignment = Alignment(horizontal='center')
-        ws.row_dimensions[1].height = 30
+        # Title - EXACT MATCH
+        ws.merge_cells('A1:L1')
+        title_cell = ws['A1']
+        title_cell.value = "📈 Individual Employee Analytics"
+        title_cell.font = Font(size=16, bold=True, color='FFFFFF')
+        title_cell.fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
+        title_cell.alignment = Alignment(horizontal='center', vertical='center')
+        ws.row_dimensions[1].height = 35
 
-        # Headers
-        headers = ['CRM', 'Name', 'Department', 'Total Days', 'Normal', 'Late', 'Absent', 'Attendance Rate']
-        for col, header in enumerate(headers, 1):
+        # Headers - EXACT MATCH
+        headers = ['CRM', 'Name', 'Department', 'Position', 'Total Days', 'Normal Days',
+                   'Late Days', 'Absent Days', 'Missing Punch', 'Attendance Rate %', 'Punctuality Rate %']
+
+        for col, header in enumerate(headers, start=1):
             cell = ws.cell(3, col, header)
             cell.font = Font(bold=True, color='FFFFFF')
-            cell.fill = PatternFill(start_color='4CAF50', end_color='4CAF50', fill_type='solid')
-            cell.alignment = Alignment(horizontal='center')
+            cell.fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
+            cell.alignment = Alignment(horizontal='center', vertical='center')
 
         # Data
         row = 4
         for crm, data in sorted(analytics.items()):
             ws.cell(row, 1, crm)
             ws.cell(row, 2, data['name'])
-            ws.cell(row, 3, data['department'])
-            ws.cell(row, 4, data['total'])
-            ws.cell(row, 5, data['normal'])
-            ws.cell(row, 6, data['late'])
-            ws.cell(row, 7, data['absent'])
-            ws.cell(row, 8, f"{data['attendance_rate']:.1f}%")
+            ws.cell(row, 3, data['dept'])
+            ws.cell(row, 4, data['position'])
+            ws.cell(row, 5, data['total'])
+            ws.cell(row, 6, data['normal'])
+            ws.cell(row, 7, data['late'])
+            ws.cell(row, 8, data['absent'])
+            ws.cell(row, 9, data['missing'])
+            ws.cell(row, 10, f"{data['attendance_rate']}%")
+            ws.cell(row, 11, f"{data['punctuality_rate']}%")
             row += 1
 
-        for col in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']:
-            ws.column_dimensions[col].width = 15
+        # Column widths
+        ws.column_dimensions['A'].width = 20
+        ws.column_dimensions['B'].width = 25
+        ws.column_dimensions['C'].width = 20
+        ws.column_dimensions['D'].width = 25
+        for col in range(5, 12):
+            ws.column_dimensions[get_column_letter(col)].width = 15
 
     def create_alerts_sheet(self, wb):
-        """Create alerts sheet"""
-        ws = wb.create_sheet("Alerts", 2)
+        """Create alerts sheet - EXACT MATCH with desktop version"""
+        ws = wb.create_sheet("Alerts & Warnings", 2)
 
-        ws.merge_cells('A1:E1')
-        title = ws['A1']
-        title.value = "Attendance Alerts"
-        title.font = Font(size=14, bold=True, color='FFFFFF')
-        title.fill = PatternFill(start_color='FF5722', end_color='FF5722', fill_type='solid')
-        title.alignment = Alignment(horizontal='center')
-        ws.row_dimensions[1].height = 30
+        # Get thresholds
+        thresholds = self.config.get('alert_thresholds', {})
+        high_absences = thresholds.get('high_absences', 3)
+        frequent_late = thresholds.get('frequent_late', 5)
+        missing_punches = thresholds.get('missing_punches', 5)
+        low_rate = thresholds.get('low_attendance_rate', 75.0)
 
-        headers = ['CRM', 'Name', 'Alert Type', 'Count', 'Severity']
-        for col, header in enumerate(headers, 1):
+        # Calculate analytics for alerts
+        analytics = {}
+        for crm in set(r['crm'] for r in self.processed_data):
+            records = [r for r in self.processed_data if r['crm'] == crm]
+            total = len(records)
+            late = sum(1 for r in records if r['status'] == 'Late')
+            absent = sum(1 for r in records if r['status'] == 'Absent')
+            missing = sum(1 for r in records if 'Missing Punch' in r['status'])
+            attendance_rate = (total - absent) / total * 100 if total > 0 else 0
+
+            analytics[crm] = {
+                'name': records[0]['name'],
+                'late': late,
+                'absent': absent,
+                'missing': missing,
+                'rate': attendance_rate
+            }
+
+        # Title - EXACT MATCH
+        ws.merge_cells('A1:D1')
+        title_cell = ws['A1']
+        title_cell.value = "⚠️ Attendance Alerts & Warnings"
+        title_cell.font = Font(size=16, bold=True, color='FFFFFF')
+        title_cell.fill = PatternFill(start_color='DC3545', end_color='DC3545', fill_type='solid')
+        title_cell.alignment = Alignment(horizontal='center', vertical='center')
+        ws.row_dimensions[1].height = 35
+
+        # Headers
+        headers = ['CRM', 'Name', 'Alert Type', 'Details']
+        for col, header in enumerate(headers, start=1):
             cell = ws.cell(3, col, header)
             cell.font = Font(bold=True, color='FFFFFF')
-            cell.fill = PatternFill(start_color='E64A19', end_color='E64A19', fill_type='solid')
+            cell.fill = PatternFill(start_color='DC3545', end_color='DC3545', fill_type='solid')
+            cell.alignment = Alignment(horizontal='center', vertical='center')
 
+        # Generate alerts - EXACT MATCH with desktop
         row = 4
-        for crm, data in self.penalties_data.items():
-            if data['late_count'] >= 3:
+        alert_count = 0
+
+        for crm, data in sorted(analytics.items()):
+            if data['absent'] >= high_absences:
                 ws.cell(row, 1, crm)
                 ws.cell(row, 2, data['name'])
-                ws.cell(row, 3, "Frequent Late")
-                ws.cell(row, 4, data['late_count'])
-                ws.cell(row, 5, "HIGH")
+                ws.cell(row, 3, "High Absences")
+                ws.cell(row, 4, f"{data['absent']} absences in period")
+                for col in range(1, 5):
+                    ws.cell(row, col).fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')
                 row += 1
+                alert_count += 1
 
-            if data['absence_count'] >= 2:
+            if data['late'] >= frequent_late:
                 ws.cell(row, 1, crm)
                 ws.cell(row, 2, data['name'])
-                ws.cell(row, 3, "Multiple Absences")
-                ws.cell(row, 4, data['absence_count'])
-                ws.cell(row, 5, "HIGH")
+                ws.cell(row, 3, "Frequent Late Arrivals")
+                ws.cell(row, 4, f"{data['late']} late arrivals in period")
+                for col in range(1, 5):
+                    ws.cell(row, col).fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')
                 row += 1
+                alert_count += 1
 
-        for col in ['A', 'B', 'C', 'D', 'E']:
-            ws.column_dimensions[col].width = 18
+            if data['missing'] >= missing_punches:
+                ws.cell(row, 1, crm)
+                ws.cell(row, 2, data['name'])
+                ws.cell(row, 3, "Missing Punches")
+                ws.cell(row, 4, f"{data['missing']} missing punches (possible device issue)")
+                for col in range(1, 5):
+                    ws.cell(row, col).fill = PatternFill(start_color='FFD9E6', end_color='FFD9E6', fill_type='solid')
+                row += 1
+                alert_count += 1
+
+            if data['rate'] < low_rate:
+                ws.cell(row, 1, crm)
+                ws.cell(row, 2, data['name'])
+                ws.cell(row, 3, "Low Attendance Rate")
+                ws.cell(row, 4, f"Attendance rate: {data['rate']:.1f}%")
+                for col in range(1, 5):
+                    ws.cell(row, col).fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')
+                row += 1
+                alert_count += 1
+
+        if alert_count == 0:
+            ws.merge_cells('A5:D5')
+            cell = ws['A5']
+            cell.value = "✅ No attendance issues detected!"
+            cell.fill = PatternFill(start_color='D4EDDA', end_color='D4EDDA', fill_type='solid')
+            cell.font = Font(bold=True)
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+
+        # Column widths
+        ws.column_dimensions['A'].width = 20
+        ws.column_dimensions['B'].width = 25
+        ws.column_dimensions['C'].width = 25
+        ws.column_dimensions['D'].width = 40
 
     def create_penalties_sheet(self, wb):
-        """Create penalties sheet"""
+        """Create penalties sheet - EXACT MATCH with desktop version (25 columns with formulas)"""
         ws = wb.create_sheet("Penalties", 3)
         currency = self.config.get('penalties', {}).get('currency', 'EGP')
+        penalties_config = self.config.get('penalties', {})
 
-        ws.merge_cells('A1:L1')
-        title = ws['A1']
-        title.value = f"Attendance Penalties Report ({currency})"
-        title.font = Font(size=14, bold=True, color='FFFFFF')
-        title.fill = PatternFill(start_color='DC3545', end_color='DC3545', fill_type='solid')
-        title.alignment = Alignment(horizontal='center')
+        # Get summary sheet info for formula references
+        summary_ws = wb['Summary Report']
+        summary_last_col = summary_ws.max_column
+        summary_last_col_letter = get_column_letter(summary_last_col)
+
+        total_cols = 25
+
+        # Title
+        ws.merge_cells(f'A1:{get_column_letter(total_cols)}1')
+        title_cell = ws['A1']
+        title_cell.value = f"Attendance Penalties Report ({currency})"
+        title_cell.font = Font(name='Segoe UI', size=14, bold=True, color='FFFFFF')
+        title_cell.fill = PatternFill(start_color='DC3545', end_color='DC3545', fill_type='solid')
+        title_cell.alignment = Alignment(horizontal='center', vertical='center')
         ws.row_dimensions[1].height = 30
 
-        headers = ['CRM', 'Name', 'Department', 'Late Count', f'Late Penalty ({currency})',
-                   'Missing Punches', 'Punch Ded. (days)', 'Absences', 'Absence Ded. (days)',
-                   f'Total Penalty ({currency})', 'Total Ded. (days)', 'Warnings']
+        # Subtitle
+        ws.merge_cells(f'A2:{get_column_letter(total_cols)}2')
+        subtitle = ws['A2']
+        subtitle.value = "Based on Attendance and Discipline Policy 2026 - Section 7 (Linked to Summary Report)"
+        subtitle.font = Font(size=9, italic=True)
+        subtitle.alignment = Alignment(horizontal='center')
 
-        for col, header in enumerate(headers, 1):
-            cell = ws.cell(4, col, header)
+        # Headers (25 columns)
+        headers = [
+            'CRM', 'Name', 'National ID', 'Vendor', 'PS ID', 'Department', 'Join Date',
+            'Late Count', f'Late Penalty ({currency})',
+            'Missing Punches', 'Punch Ded. (days)',
+            'Absences', 'Absence Ded. (days)',
+            'Early Dep.', 'Early Dep. Ded.',
+            'Half Day', 'Half Day Ded.',
+            'Sick Leave', 'Sick Ded.',
+            'Unpaid Leave', 'Unpaid Ded.',
+            f'Total Penalty ({currency})', 'Total Ded. (days)', 'Warnings',
+            'Backdated Leaves'
+        ]
+
+        header_row = 4
+        for col, header in enumerate(headers, start=1):
+            cell = ws.cell(header_row, col, header)
             cell.font = Font(bold=True, color='FFFFFF', size=9)
             cell.fill = PatternFill(start_color='495057', end_color='495057', fill_type='solid')
-            cell.alignment = Alignment(horizontal='center', wrap_text=True)
+            cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+            cell.border = Border(
+                left=Side(style='thin'), right=Side(style='thin'),
+                top=Side(style='thin'), bottom=Side(style='thin')
+            )
 
-        row = 5
+        ws.row_dimensions[header_row].height = 40
+
+        # Get penalty config values
+        late_1st = penalties_config.get('late_1st', 100)
+        late_2nd = penalties_config.get('late_2nd', 200)
+        late_3rd = penalties_config.get('late_3rd', 500)
+        late_4th_plus = penalties_config.get('late_4th_plus', 500)
+        missing_threshold = penalties_config.get('missing_punch_threshold', 3)
+        missing_deduction_rate = penalties_config.get('missing_punch_deduction', 0.5)
+        absence_deduction_rate = penalties_config.get('absence_deduction', 2)
+        early_dep_deduction = 0.5
+        half_day_deduction = 0.5
+        sick_leave_deduction = 0.25
+        unpaid_leave_deduction = 1.0
+
+        # Build CRM to summary row mapping
+        crm_to_summary_row = {}
+        for r in range(4, summary_ws.max_row + 1):
+            crm_val = summary_ws.cell(r, 1).value
+            if crm_val:
+                crm_to_summary_row[crm_val] = r
+
+        data_row = 5
         for crm, data in sorted(self.penalties_data.items()):
-            ws.cell(row, 1, crm)
-            ws.cell(row, 2, data['name'])
-            ws.cell(row, 3, data.get('department', ''))
-            ws.cell(row, 4, data['late_count'])
-            ws.cell(row, 5, data['late_penalty'])
-            ws.cell(row, 6, data['missing_punch_count'])
-            ws.cell(row, 7, data['missing_deduction'])
-            ws.cell(row, 8, data['absence_count'])
-            ws.cell(row, 9, data['absence_deduction'])
-            ws.cell(row, 10, data['total_penalty_egp'])
-            ws.cell(row, 11, data['total_deduction_days'])
-            ws.cell(row, 12, data['total_warnings'])
-            row += 1
+            summary_row = crm_to_summary_row.get(crm, None)
+            sr = summary_row
+            rng = f"'Summary Report'!$D${sr}:${summary_last_col_letter}${sr}" if sr else None
 
-        for i, width in enumerate([15, 18, 15, 10, 14, 12, 12, 10, 12, 14, 12, 10], 1):
+            # Column A: CRM
+            ws.cell(data_row, 1, crm)
+
+            # Columns B-G: Static employee info
+            ws.cell(data_row, 2, data['name'])
+            ws.cell(data_row, 3, data.get('national_id', ''))
+            ws.cell(data_row, 4, data.get('vendor', ''))
+            ws.cell(data_row, 5, data.get('ps_id', ''))
+            ws.cell(data_row, 6, data.get('department', ''))
+            ws.cell(data_row, 7, data.get('join_date', ''))
+
+            # Column H: Late Count
+            if sr:
+                ws.cell(data_row, 8, f'=COUNTIF({rng},"Late")')
+            else:
+                ws.cell(data_row, 8, data['late_count'])
+
+            # Column I: Late Penalty formula
+            late_col = "H"
+            penalty_formula = (
+                f"=IF({late_col}{data_row}=0,0,"
+                f"IF({late_col}{data_row}=1,{late_1st},"
+                f"IF({late_col}{data_row}=2,{late_1st}+{late_2nd},"
+                f"IF({late_col}{data_row}=3,{late_1st}+{late_2nd}+{late_3rd},"
+                f"{late_1st}+{late_2nd}+{late_3rd}+({late_col}{data_row}-3)*{late_4th_plus}))))"
+            )
+            ws.cell(data_row, 9, penalty_formula)
+
+            # Column J: Missing Punches
+            if sr:
+                missing_formula = (
+                    f'=COUNTIF({rng},"Missing Punch In")'
+                    f'+COUNTIF({rng},"Missing Punch In (Justified)")'
+                    f'+COUNTIF({rng},"Missing Punch Out")'
+                    f'+COUNTIF({rng},"Missing Punch Out (Justified)")'
+                )
+                ws.cell(data_row, 10, missing_formula)
+            else:
+                ws.cell(data_row, 10, data['missing_punch_count'])
+
+            # Column K: Punch Deduction
+            ws.cell(data_row, 11, f"=IF(J{data_row}>{missing_threshold},(J{data_row}-{missing_threshold})*{missing_deduction_rate},0)")
+
+            # Column L: Absences
+            if sr:
+                ws.cell(data_row, 12, f'=COUNTIF({rng},"Absent")')
+            else:
+                ws.cell(data_row, 12, data['absence_count'])
+
+            # Column M: Absence Deduction
+            ws.cell(data_row, 13, f"=L{data_row}*{absence_deduction_rate}")
+
+            # Column N: Early Departure Count
+            if sr:
+                ws.cell(data_row, 14, f'=COUNTIF({rng},"Early Departure")+COUNTIF({rng},"Early Departure (BD)")')
+            else:
+                ws.cell(data_row, 14, 0)
+
+            # Column O: Early Departure Deduction
+            ws.cell(data_row, 15, f"=N{data_row}*{early_dep_deduction}")
+
+            # Column P: Half Day Count
+            if sr:
+                ws.cell(data_row, 16, f'=COUNTIF({rng},"Half Day")+COUNTIF({rng},"Half Day (BD)")+COUNTIF({rng},"Early Leave (HD)")+COUNTIF({rng},"Early Leave (HD) (BD)")')
+            else:
+                ws.cell(data_row, 16, 0)
+
+            # Column Q: Half Day Deduction
+            ws.cell(data_row, 17, f"=P{data_row}*{half_day_deduction}")
+
+            # Column R: Sick Leave Count
+            if sr:
+                ws.cell(data_row, 18, f'=COUNTIF({rng},"Sick Leave")+COUNTIF({rng},"Sick Leave (BD)")')
+            else:
+                ws.cell(data_row, 18, 0)
+
+            # Column S: Sick Leave Deduction
+            ws.cell(data_row, 19, f"=R{data_row}*{sick_leave_deduction}")
+
+            # Column T: Unpaid Leave Count
+            if sr:
+                ws.cell(data_row, 20, f'=COUNTIF({rng},"Unpaid Leave")+COUNTIF({rng},"Unpaid Leave (BD)")+COUNTIF({rng},"Unpaid leave")')
+            else:
+                ws.cell(data_row, 20, 0)
+
+            # Column U: Unpaid Leave Deduction
+            ws.cell(data_row, 21, f"=T{data_row}*{unpaid_leave_deduction}")
+
+            # Column V: Total Penalty
+            ws.cell(data_row, 22, f"=I{data_row}")
+
+            # Column W: Total Deduction
+            ws.cell(data_row, 23, f"=K{data_row}+M{data_row}+O{data_row}+Q{data_row}+S{data_row}+U{data_row}")
+
+            # Column X: Warnings
+            warnings_formula = (
+                f"=IF(H{data_row}>=3,1,0)+"
+                f"IF(J{data_row}>6,1,0)+"
+                f"IF(L{data_row}>0,1,0)"
+            )
+            ws.cell(data_row, 24, warnings_formula)
+
+            # Column Y: Backdated Leaves
+            if sr:
+                ws.cell(data_row, 25, f'=COUNTIF({rng},"*(BD)")')
+            else:
+                ws.cell(data_row, 25, 0)
+
+            # Apply borders
+            for col in range(1, total_cols + 1):
+                cell = ws.cell(data_row, col)
+                cell.alignment = Alignment(horizontal='center', vertical='center')
+                cell.border = Border(
+                    left=Side(style='thin'), right=Side(style='thin'),
+                    top=Side(style='thin'), bottom=Side(style='thin')
+                )
+
+            data_row += 1
+
+        # Totals row
+        totals_row = data_row + 1
+        first_data_row = 5
+        last_data_row = data_row - 1
+
+        ws.cell(totals_row, 1, "TOTAL").font = Font(bold=True)
+
+        sum_columns = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]
+        for col in sum_columns:
+            col_letter = get_column_letter(col)
+            ws.cell(totals_row, col, f"=SUM({col_letter}{first_data_row}:{col_letter}{last_data_row})")
+
+        # Highlight totals
+        ws.cell(totals_row, 22).fill = PatternFill(start_color='DC3545', end_color='DC3545', fill_type='solid')
+        ws.cell(totals_row, 22).font = Font(bold=True, color='FFFFFF', size=12)
+        ws.cell(totals_row, 23).fill = PatternFill(start_color='DC3545', end_color='DC3545', fill_type='solid')
+        ws.cell(totals_row, 23).font = Font(bold=True, color='FFFFFF', size=12)
+        ws.cell(totals_row, 24).font = Font(bold=True)
+
+        for col in range(1, total_cols + 1):
+            ws.cell(totals_row, col).border = Border(
+                left=Side(style='thin'), right=Side(style='thin'),
+                top=Side(style='double'), bottom=Side(style='thin')
+            )
+
+        # Column widths
+        widths = [15, 18, 16, 12, 10, 15, 11, 8, 14, 10, 10, 8, 10, 8, 10, 8, 10, 8, 8, 10, 10, 14, 12, 8, 12]
+        for i, width in enumerate(widths, start=1):
             ws.column_dimensions[get_column_letter(i)].width = width
 
+        # Apply highlighting to deduction columns
+        for r in range(5, data_row):
+            ws.cell(r, 9).fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')
+            ws.cell(r, 11).fill = PatternFill(start_color='FFD9E6', end_color='FFD9E6', fill_type='solid')
+            ws.cell(r, 13).fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')
+            ws.cell(r, 15).fill = PatternFill(start_color='FCE4D6', end_color='FCE4D6', fill_type='solid')
+            ws.cell(r, 17).fill = PatternFill(start_color='FCE4D6', end_color='FCE4D6', fill_type='solid')
+            ws.cell(r, 19).fill = PatternFill(start_color='BDD7EE', end_color='BDD7EE', fill_type='solid')
+            ws.cell(r, 21).fill = PatternFill(start_color='BDD7EE', end_color='BDD7EE', fill_type='solid')
+            ws.cell(r, 22).fill = PatternFill(start_color='F8D7DA', end_color='F8D7DA', fill_type='solid')
+            ws.cell(r, 22).font = Font(bold=True)
+            ws.cell(r, 23).fill = PatternFill(start_color='F8D7DA', end_color='F8D7DA', fill_type='solid')
+            ws.cell(r, 23).font = Font(bold=True)
+            ws.cell(r, 24).fill = PatternFill(start_color='FFF3CD', end_color='FFF3CD', fill_type='solid')
+            ws.cell(r, 24).font = Font(bold=True, color='856404')
+            ws.cell(r, 25).fill = PatternFill(start_color='E1D5E7', end_color='E1D5E7', fill_type='solid')
+            ws.cell(r, 25).font = Font(bold=True, color='6B3FA0')
+
+        # Policy legend
+        legend_row = totals_row + 3
+        ws.cell(legend_row, 1, "Deduction Policy Reference:").font = Font(bold=True)
+        legend_row += 1
+        ws.cell(legend_row, 1, f"• Late: {currency} {late_1st} (1st), {currency} {late_2nd} (2nd), {currency} {late_3rd}+ (3rd+) + Warning | Late (Approved): No Deduction")
+        legend_row += 1
+        ws.cell(legend_row, 1, f"• Missing Punch (all types): {missing_deduction_rate} day after {missing_threshold} occurrences, warning after 6")
+        legend_row += 1
+        ws.cell(legend_row, 1, f"• Absent: {absence_deduction_rate} days | Early Departure/Half Day: {early_dep_deduction} day | Sick Leave: {sick_leave_deduction} day | Unpaid Leave: {unpaid_leave_deduction} day")
+        legend_row += 1
+        ws.cell(legend_row, 1, "• No Deduction: Normal, Late (Approved), Early Departure (Approved), Annual/Casual/Marriage/Paternity/Maternity/Bereavement/Military Call Leave")
+        legend_row += 1
+        ws.cell(legend_row, 1, "• BACKDATED LEAVES (BD): Leaves marked with (BD) suffix are transferred from previous months - shown in purple, HR to review manually")
+        ws.cell(legend_row, 1).font = Font(bold=True, color='6B3FA0')
+        legend_row += 1
+        ws.cell(legend_row, 1, "• Note: This sheet is linked to Summary Report - use the dropdown to change status and penalties will auto-update")
+        ws.cell(legend_row, 1).font = Font(italic=True, color='0066CC')
+
     def create_duplicates_sheet(self, wb):
-        """Create the Duplicates sheet showing leave vs attendance conflicts"""
+        """Create duplicates sheet - shows leave vs attendance conflicts"""
         ws = wb.create_sheet("Duplicates", 4)
 
         ws.merge_cells('A1:G1')
@@ -1012,7 +1314,6 @@ def main():
         layout="wide"
     )
 
-    # Initialize session state
     if 'processor' not in st.session_state:
         st.session_state.processor = AttendanceProcessor()
     if 'master_loaded' not in st.session_state:
@@ -1021,18 +1322,12 @@ def main():
         st.session_state.attendance_loaded = False
     if 'leave_loaded' not in st.session_state:
         st.session_state.leave_loaded = False
-    if 'available_departments' not in st.session_state:
-        st.session_state.available_departments = []
-    if 'available_crms' not in st.session_state:
-        st.session_state.available_crms = []
     if 'attendance_files' not in st.session_state:
         st.session_state.attendance_files = []
 
-    # Header
     st.title("📊 Attendance Dashboard v2.2")
-    st.markdown("*Web-based attendance processing application*")
+    st.markdown("*Web-based attendance processing - EXACT MATCH with desktop version*")
 
-    # Sidebar: Settings & Filters
     with st.sidebar:
         st.header("⚙️ Settings")
 
@@ -1047,43 +1342,25 @@ def main():
             default=["Friday"]
         )
 
-        # Convert off days to numbers
         day_map = {"Monday": 0, "Tuesday": 1, "Wednesday": 2, "Thursday": 3,
                    "Friday": 4, "Saturday": 5, "Sunday": 6}
         off_day_nums = [day_map[d] for d in off_days]
 
-        # Update config
         st.session_state.processor.config['late_threshold'] = late_threshold.strftime("%I:%M %p")
         st.session_state.processor.config['off_days'] = off_day_nums
 
         st.divider()
 
-        # Filters (only show after master data is loaded)
         if st.session_state.master_loaded:
             st.header("🔍 Filters")
 
-            # Get available departments and CRMs
             depts = sorted(set(info['department'] for info in st.session_state.processor.employee_mapping.values()
                                if info['department']))
             crms = sorted(set(info['crm'] for info in st.session_state.processor.employee_mapping.values()
                               if info['crm']))
 
-            st.session_state.available_departments = depts
-            st.session_state.available_crms = crms
-
-            selected_depts = st.multiselect(
-                "Departments",
-                options=depts,
-                default=depts,
-                help="Select departments to include"
-            )
-
-            selected_crms = st.multiselect(
-                "CRMs",
-                options=crms,
-                default=crms,
-                help="Select CRMs to include"
-            )
+            selected_depts = st.multiselect("Departments", options=depts, default=depts)
+            selected_crms = st.multiselect("CRMs", options=crms, default=crms)
 
             st.session_state.selected_depts = selected_depts
             st.session_state.selected_crms = selected_crms
@@ -1092,17 +1369,11 @@ def main():
             total_count = len(st.session_state.processor.employee_mapping)
             st.info(f"📋 {filtered_count} / {total_count} employees selected")
 
-    # Main content
     col1, col2, col3 = st.columns(3)
 
     with col1:
         st.subheader("📁 Master Data")
-        master_file = st.file_uploader(
-            "Upload Master Data",
-            type=['xlsx', 'xls'],
-            key='master_upload',
-            help="Required - Employee master data with CRM, Name, Department, etc."
-        )
+        master_file = st.file_uploader("Upload Master Data", type=['xlsx', 'xls'], key='master_upload')
 
         if master_file is not None and not st.session_state.master_loaded:
             with st.spinner("Loading master data..."):
@@ -1117,13 +1388,8 @@ def main():
 
     with col2:
         st.subheader("📅 Attendance Files")
-        attendance_files = st.file_uploader(
-            "Upload Attendance Files",
-            type=['xlsx', 'xls'],
-            accept_multiple_files=True,
-            key='attendance_upload',
-            help="Required - Daily attendance files"
-        )
+        attendance_files = st.file_uploader("Upload Attendance Files", type=['xlsx', 'xls'],
+                                            accept_multiple_files=True, key='attendance_upload')
 
         if attendance_files:
             st.session_state.attendance_files = [(f, f.name) for f in attendance_files]
@@ -1132,12 +1398,7 @@ def main():
 
     with col3:
         st.subheader("🏖️ Leave Sheet")
-        leave_file = st.file_uploader(
-            "Upload Leave Sheet",
-            type=['xlsx', 'xls'],
-            key='leave_upload',
-            help="Optional - Leave records"
-        )
+        leave_file = st.file_uploader("Upload Leave Sheet", type=['xlsx', 'xls'], key='leave_upload')
 
         if leave_file is not None and not st.session_state.leave_loaded:
             with st.spinner("Loading leave data..."):
@@ -1152,7 +1413,6 @@ def main():
 
     st.divider()
 
-    # Generate Report Button
     ready = st.session_state.master_loaded and st.session_state.attendance_loaded
 
     if st.button("🚀 GENERATE REPORT", type="primary", disabled=not ready, use_container_width=True):
@@ -1160,26 +1420,20 @@ def main():
             progress_bar = st.progress(0)
             status_text = st.empty()
 
-            # Get filter selections
             selected_depts = getattr(st.session_state, 'selected_depts', None)
             selected_crms = getattr(st.session_state, 'selected_crms', None)
 
-            # Process attendance files
             status_text.text("Processing attendance files...")
             progress_bar.progress(20)
             st.session_state.processor.process_attendance_files(
-                st.session_state.attendance_files,
-                selected_depts,
-                selected_crms
+                st.session_state.attendance_files, selected_depts, selected_crms
             )
 
-            # Apply leave records
             if st.session_state.processor.leave_records:
                 status_text.text("Applying leave records...")
                 progress_bar.progress(50)
                 st.session_state.processor.fill_leave_records(selected_depts, selected_crms)
 
-            # Generate Excel report
             status_text.text("Generating Excel report...")
             progress_bar.progress(80)
             excel_data = st.session_state.processor.create_excel_report()
@@ -1187,7 +1441,6 @@ def main():
             progress_bar.progress(100)
             status_text.text("✅ Report generated successfully!")
 
-            # Download button
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             st.download_button(
                 label="📥 Download Report",
@@ -1197,7 +1450,6 @@ def main():
                 type="primary"
             )
 
-            # Show logs
             with st.expander("📋 Processing Log"):
                 for log in st.session_state.processor.logs:
                     if log['level'] == 'error':
@@ -1209,7 +1461,6 @@ def main():
                     else:
                         st.info(log['message'])
 
-            # Show conflicts if any
             if st.session_state.processor.conflict_records:
                 st.warning(f"⚠️ Detected {len(st.session_state.processor.conflict_records)} leave vs attendance conflicts")
                 with st.expander("View Conflicts"):
@@ -1219,7 +1470,6 @@ def main():
     if not ready:
         st.info("📌 Please upload Master Data and at least one Attendance file to generate a report.")
 
-    # Reset button
     if st.button("🔄 Reset All"):
         st.session_state.processor = AttendanceProcessor()
         st.session_state.master_loaded = False
@@ -1228,9 +1478,8 @@ def main():
         st.session_state.attendance_files = []
         st.rerun()
 
-    # Footer
     st.divider()
-    st.caption("Attendance Dashboard v2.2 - Web Edition | Built with Streamlit")
+    st.caption("Attendance Dashboard v2.2 - Web Edition | EXACT MATCH with Desktop Version")
 
 
 if __name__ == "__main__":
