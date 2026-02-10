@@ -68,37 +68,165 @@ class AttendanceProcessor:
         self.logs.append({'level': level, 'message': message})
 
     def normalize_id(self, value):
-        """Normalize ID values for consistent matching"""
+        """Normalize ID values by converting floats to integers before string conversion.
+
+        This fixes the mismatch between float PS IDs (185680.0) and int AC-No (185680).
+        EXACT MATCH with desktop version.
+        """
         if pd.isna(value):
             return ""
-        value_str = str(value).strip()
-        if value_str.replace('.', '').replace('-', '').isdigit():
-            try:
-                num = float(value_str)
-                if num == int(num):
-                    return str(int(num))
-            except ValueError:
-                pass
-        return value_str
+        # If it's a float that represents a whole number, convert to int first
+        if isinstance(value, float) and value.is_integer():
+            return str(int(value)).strip()
+        # Try to convert string floats like "185680.0" to int
+        try:
+            float_val = float(value)
+            if float_val.is_integer():
+                return str(int(float_val)).strip()
+        except (ValueError, TypeError):
+            pass
+        return str(value).strip()
 
     def find_column(self, df, search_terms, exact_matches=None):
-        """Find column by search terms or exact matches"""
-        columns = df.columns.tolist()
+        """Find column in dataframe using multiple search strategies.
 
+        EXACT MATCH with desktop version - 4 strategies.
+
+        Args:
+            df: DataFrame to search
+            search_terms: List of terms to search for (e.g., ['ac', 'no'])
+            exact_matches: Optional list of exact column names to try first
+
+        Returns:
+            Column name or None
+        """
+        # Strategy 1: Try exact matches first
         if exact_matches:
             for exact in exact_matches:
-                if exact in columns:
+                if exact in df.columns:
                     return exact
-                for col in columns:
-                    if str(col).lower().strip() == exact.lower().strip():
-                        return col
 
-        for col in columns:
+        # Strategy 2: Try case-insensitive exact match
+        if exact_matches:
+            df_cols_lower = {str(c).lower(): c for c in df.columns}
+            for exact in exact_matches:
+                if exact.lower() in df_cols_lower:
+                    return df_cols_lower[exact.lower()]
+
+        # Strategy 3: Search for all terms in column name
+        for col in df.columns:
             col_lower = str(col).lower()
-            if any(term in col_lower for term in search_terms):
+            if all(term.lower() in col_lower for term in search_terms):
+                return col
+
+        # Strategy 4: Search for any term (less strict)
+        for col in df.columns:
+            col_lower = str(col).lower()
+            if any(term.lower() in col_lower for term in search_terms):
                 return col
 
         return None
+
+    def validate_master_data(self, df):
+        """Validate master data has required columns. EXACT MATCH with desktop."""
+        df_cols_lower = [str(c).lower() for c in df.columns]
+
+        has_id_col = any('ac' in col and 'no' in col for col in df_cols_lower) or \
+                     any('ps' in col and 'id' in col for col in df_cols_lower) or \
+                     any('psid' in col for col in df_cols_lower)
+
+        has_crm = any('crm' in col for col in df_cols_lower)
+        has_name = any('name' in col for col in df_cols_lower)
+
+        missing = []
+        if not has_id_col:
+            missing.append('AC-No. or PS ID')
+        if not has_crm:
+            missing.append('CRM')
+        if not has_name:
+            missing.append('Name')
+
+        if missing:
+            raise ValueError(f"Master data missing required columns: {', '.join(missing)}")
+
+        if len(df) == 0:
+            raise ValueError("Master data file is empty")
+
+        return True
+
+    def validate_attendance_file(self, df, filename):
+        """Validate attendance file has required columns. EXACT MATCH with desktop."""
+        required_patterns = [
+            ('ac', 'no'),
+            ('name',),
+            ('clock', 'in'),
+        ]
+
+        df_cols_lower = [str(c).lower() for c in df.columns]
+
+        for pattern in required_patterns:
+            if not any(all(p in col for p in pattern) for col in df_cols_lower):
+                raise ValueError(f"Attendance file '{filename}' missing columns matching pattern: {pattern}")
+
+        if len(df) == 0:
+            raise ValueError(f"Attendance file '{filename}' is empty")
+
+        return True
+
+    def validate_leave_sheet(self, df):
+        """Validate leave sheet has required structure. EXACT MATCH with desktop."""
+        date_cols = [c for c in df.columns if self._is_date_column(c)]
+
+        if len(date_cols) > 0:
+            df_cols_lower = [str(c).lower() for c in df.columns]
+            if not any('crm' in col for col in df_cols_lower):
+                raise ValueError("Leave sheet (matrix format) missing CRM column")
+        else:
+            df_cols_lower = [str(c).lower() for c in df.columns]
+            has_crm = any('crm' in col for col in df_cols_lower)
+            has_date = any('date' in col for col in df_cols_lower)
+
+            if not has_crm or not has_date:
+                raise ValueError("Leave sheet (vertical format) missing CRM or Date column")
+
+        if len(df) == 0:
+            raise ValueError("Leave sheet is empty")
+
+        return True
+
+    def _is_date_column(self, col_name):
+        """Check if column name looks like a date. EXACT MATCH with desktop."""
+        if isinstance(col_name, datetime):
+            return True
+        if hasattr(col_name, 'date'):
+            return True
+
+        col_str = str(col_name)
+        date_patterns = [
+            r'\d{1,2}[-/]\w{3}',
+            r'\w{3}[-/]\d{1,2}',
+            r'\d{1,2}[-/]\d{1,2}',
+            r'\d{4}[-/]\d{2}[-/]\d{2}',
+        ]
+        return any(re.search(pattern, col_str) for pattern in date_patterns)
+
+    def _parse_date_field(self, row, date_col):
+        """Parse a date field from a row. EXACT MATCH with desktop."""
+        if not date_col or pd.isna(row[date_col]):
+            return ""
+        try:
+            raw_val = row[date_col]
+            if isinstance(raw_val, (datetime, pd.Timestamp)):
+                return raw_val.strftime('%Y-%m-%d')
+            elif hasattr(raw_val, '__int__') and not isinstance(raw_val, str):
+                excel_epoch = datetime(1899, 12, 30)
+                dt = excel_epoch + timedelta(days=int(raw_val))
+                return dt.strftime('%Y-%m-%d')
+            else:
+                dt = pd.to_datetime(raw_val, dayfirst=True)
+                return dt.strftime('%Y-%m-%d')
+        except Exception:
+            return str(row[date_col]).strip()
 
     def load_master_data(self, file_obj, filename):
         """Load and process master data file - EXACT MATCH with desktop"""
@@ -106,7 +234,10 @@ class AttendanceProcessor:
             self.log_message("Loading master data...")
             df = read_excel_file(file_obj, filename)
 
-            # Find columns - EXACT SAME LOGIC
+            # Validate file
+            self.validate_master_data(df)
+
+            # Find columns - EXACT SAME LOGIC as desktop
             ac_col = self.find_column(df, ['ac', 'no'], ['AC-No.', 'Ac-No.', 'AC No', 'PS ID', 'PS Id', 'PSID'])
             if not ac_col:
                 ac_col = self.find_column(df, ['ps', 'id'], ['PS ID', 'PS Id', 'PSID'])
@@ -119,7 +250,7 @@ class AttendanceProcessor:
             vendor_col = self.find_column(df, ['vendor'], ['Vendor'])
             ps_id_col = self.find_column(df, ['ps', 'id'], ['PS ID', 'PS Id', 'PSID', 'PS-ID'])
 
-            # Join Date column
+            # Join Date column - support newlines in column names
             join_date_col = None
             for col in df.columns:
                 col_clean = str(col).replace('\n', ' ').lower().strip()
@@ -142,6 +273,9 @@ class AttendanceProcessor:
                 exit_date_col = self.find_column(df, ['exit', 'resign', 'end', 'termination', 'leaving'],
                                                  ['Exit Date', 'Resignation Date', 'End Date', 'Termination Date',
                                                   'Leaving Date', 'Last Day', 'Last Working Day'])
+
+            if not all([ac_col, crm_col, name_col]):
+                self.log_message("Warning: Some required columns may be missing", 'warning')
 
             # Build employee mapping
             self.employee_mapping = {}
@@ -170,30 +304,13 @@ class AttendanceProcessor:
             self.log_message(f"Error loading master data: {str(e)}", 'error')
             return False
 
-    def _parse_date_field(self, row, date_col):
-        """Parse a date field from a row"""
-        if not date_col or pd.isna(row[date_col]):
-            return ""
-        try:
-            raw_val = row[date_col]
-            if isinstance(raw_val, (datetime, pd.Timestamp)):
-                return raw_val.strftime('%Y-%m-%d')
-            elif hasattr(raw_val, '__int__') and not isinstance(raw_val, str):
-                excel_epoch = datetime(1899, 12, 30)
-                dt = excel_epoch + timedelta(days=int(raw_val))
-                return dt.strftime('%Y-%m-%d')
-            else:
-                dt = pd.to_datetime(raw_val, dayfirst=True)
-                return dt.strftime('%Y-%m-%d')
-        except Exception:
-            return str(row[date_col]).strip()
-
     def load_leave_data(self, file_obj, filename):
-        """Load and process leave data file"""
+        """Load and process leave data file - EXACT MATCH with desktop"""
         try:
             self.log_message("Loading leave data...")
             self.leave_records = []
 
+            # Check for multi-sheet workbook (new format with Master + Jan-Dec sheets)
             xlsx = pd.ExcelFile(file_obj)
             sheet_names = xlsx.sheet_names
             month_sheets = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -201,33 +318,132 @@ class AttendanceProcessor:
             has_month_sheets = any(month in sheet_names for month in month_sheets)
 
             if has_month_sheets:
+                # New multi-sheet format (Master + monthly sheets)
+                self.log_message("Detected multi-sheet format (monthly sheets)")
+
+                # Load all month sheets for web version (no month prompt available)
                 for sheet_name in sheet_names:
                     if sheet_name in month_sheets:
+                        self.log_message(f"Processing sheet: {sheet_name}")
                         df = pd.read_excel(xlsx, sheet_name=sheet_name)
-                        self._process_leave_sheet(df, sheet_name)
-            else:
-                df = pd.read_excel(xlsx)
-                self._process_leave_sheet(df)
+                        self.parse_leave_matrix(df)
 
-            self.log_message(f"Loaded {len(self.leave_records)} leave records", 'success')
+                self.log_message(f"Loaded {len(self.leave_records)} leave records from monthly sheets", 'success')
+            else:
+                # Single sheet format
+                file_obj.seek(0)
+                df = read_excel_file(file_obj, filename)
+
+                # Validate file
+                self.validate_leave_sheet(df)
+
+                # Detect format (matrix vs vertical)
+                has_date_columns = any(
+                    isinstance(col, datetime) or
+                    hasattr(col, 'date') or
+                    ('-' in str(col) and any(month in str(col).lower() for month in
+                                             ['jan', 'feb', 'mar', 'apr', 'may', 'jun',
+                                              'jul', 'aug', 'sep', 'oct', 'nov', 'dec']))
+                    for col in df.columns
+                )
+
+                if has_date_columns:
+                    self.log_message("Detected matrix format (dates as columns)")
+                    self.parse_leave_matrix(df)
+                else:
+                    self.log_message("Detected vertical format")
+                    self.parse_leave_vertical(df)
+
+                self.log_message(f"Loaded {len(self.leave_records)} leave records", 'success')
+
             return True
 
         except Exception as e:
             self.log_message(f"Error loading leave data: {str(e)}", 'error')
             return False
 
-    def _process_leave_sheet(self, df, sheet_name=None):
-        """Process a single leave sheet"""
-        crm_col = self.find_column(df, ['crm'], ['CRM'])
-        date_col = self.find_column(df, ['date', 'leave'], ['Date', 'Leave Date'])
-        type_col = self.find_column(df, ['type', 'leave'], ['Type', 'Leave Type'])
+    def parse_leave_matrix(self, df):
+        """Parse leave data in matrix format - optimized for performance.
+        EXACT MATCH with desktop version."""
+        current_year = datetime.now().year
 
-        if not crm_col or not date_col:
+        crm_col = self.find_column(df, ['crm'], ['CRM'])
+
+        if not crm_col:
+            self.log_message("CRM column not found in leave sheet", 'warning')
+            return
+
+        month_map = {
+            'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
+            'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12
+        }
+
+        # Pre-identify date columns for efficiency
+        date_columns = []
+        for col in df.columns:
+            leave_date = None
+
+            if isinstance(col, datetime):
+                leave_date = col
+            elif hasattr(col, 'date'):
+                leave_date = datetime(col.year, col.month, col.day)
+            else:
+                col_str = str(col)
+                if '-' in col_str:
+                    parts = col_str.split('-')
+                    if len(parts) == 2:
+                        try:
+                            day = int(parts[0])
+                            month_str = parts[1].lower()[:3]
+                            if month_str in month_map:
+                                month = month_map[month_str]
+                                leave_date = datetime(current_year, month, day)
+                        except Exception:
+                            pass
+
+            if leave_date:
+                date_columns.append((col, leave_date))
+
+        if not date_columns:
+            self.log_message("No date columns found in leave sheet", 'warning')
+            return
+
+        # Process rows efficiently
+        crm_values = df[crm_col].astype(str).str.strip()
+
+        for idx, crm in enumerate(crm_values):
+            if not crm or crm == 'nan' or crm.lower() == 'crm':
+                continue
+
+            row = df.iloc[idx]
+
+            for col, leave_date in date_columns:
+                try:
+                    leave_type = row[col]
+                    if pd.notna(leave_type):
+                        leave_str = str(leave_type).strip()
+                        if leave_str:
+                            self.leave_records.append({
+                                'crm': crm,
+                                'date': leave_date,
+                                'leave_type': leave_str
+                            })
+                except Exception:
+                    pass
+
+    def parse_leave_vertical(self, df):
+        """Parse leave data in vertical format - EXACT MATCH with desktop"""
+        crm_col = self.find_column(df, ['crm', 'employee'], ['CRM', 'Employee CRM'])
+        date_col = self.find_column(df, ['date'], ['Date'])
+        type_col = self.find_column(df, ['type', 'leave'], ['Leave Type', 'Type'])
+
+        if not all([crm_col, date_col]):
+            self.log_message("Required columns not found in leave sheet", 'warning')
             return
 
         for idx, row in df.iterrows():
-            crm = str(row[crm_col]).strip() if pd.notna(row[crm_col]) else ""
-            if not crm:
+            crm = str(row[crm_col]).strip()
+            if not crm or crm == 'nan':
                 continue
 
             try:
@@ -267,26 +483,37 @@ class AttendanceProcessor:
         return filtered
 
     def extract_date_from_filename(self, filename):
-        """Extract date from attendance filename"""
-        patterns = [
-            r'(\d{4})[-_](\d{2})[-_](\d{2})',
-            r'(\d{2})[-_](\d{2})[-_](\d{4})',
-            r'(\d{8})',
-        ]
+        """Extract date from attendance filename - EXACT MATCH with desktop strategies"""
+        try:
+            # Strategy 1: Try to extract full date (YYYY-MM-DD format)
+            date_match = re.search(r'(\d{4})-(\d{2})-(\d{2})', filename)
+            if date_match:
+                year, month, day = date_match.groups()
+                return datetime(int(year), int(month), int(day))
 
-        for pattern in patterns:
-            match = re.search(pattern, filename)
-            if match:
-                groups = match.groups()
+            # Strategy 2: Try DD-MM-YYYY or DD_MM_YYYY
+            date_match = re.search(r'(\d{1,2})[-_](\d{1,2})[-_](\d{4})', filename)
+            if date_match:
+                day, month, year = date_match.groups()
+                return datetime(int(year), int(month), int(day))
+
+            # Strategy 3: Try YYYYMMDD
+            date_match = re.search(r'(\d{8})', filename)
+            if date_match:
                 try:
-                    if len(groups) == 1:
-                        return datetime.strptime(groups[0], '%Y%m%d')
-                    elif len(groups[0]) == 4:
-                        return datetime(int(groups[0]), int(groups[1]), int(groups[2]))
-                    else:
-                        return datetime(int(groups[2]), int(groups[1]), int(groups[0]))
+                    return datetime.strptime(date_match.group(1), '%Y%m%d')
                 except ValueError:
-                    continue
+                    pass
+
+            # Strategy 4: Extract day only, use current month/year
+            day_match = re.search(r'(\d{1,2})_report', filename)
+            if day_match:
+                day = int(day_match.group(1))
+                now = datetime.now()
+                return datetime(now.year, now.month, day)
+
+        except Exception:
+            pass
 
         return datetime.now()
 
@@ -310,7 +537,7 @@ class AttendanceProcessor:
         """Determine attendance status - EXACT MATCH with desktop"""
         day_of_week = date.weekday()
 
-        # Check if employee has resigned
+        # Check if employee has resigned (before all other checks)
         for ac_no, info in self.employee_mapping.items():
             if info.get('crm') == crm:
                 exit_date_str = info.get('exit_date', '')
@@ -323,7 +550,7 @@ class AttendanceProcessor:
                         pass
                 break
 
-        # Check if it's an OFF day
+        # Check if it's an OFF day FIRST (before leaves - ignore leaves on OFF days)
         off_days = self.config.get('off_days', [4])
         if day_of_week in off_days:
             if not clock_in and not clock_out:
@@ -331,7 +558,7 @@ class AttendanceProcessor:
             else:
                 return "Worked on Day Off", "Worked", "Worked"
 
-        # Check for leave
+        # Check for leave (only on working days, not OFF days)
         for leave in self.leave_records:
             if leave['crm'] == crm and leave['date'].date() == date.date():
                 return leave['leave_type'], "On Leave", "On Leave"
@@ -340,7 +567,7 @@ class AttendanceProcessor:
         if not clock_in and not clock_out:
             return "Absent", "No Clock In", "No Clock Out"
 
-        # Check for missing punch
+        # Check for missing punch - differentiate between In and Out
         if not clock_in:
             return "Missing Punch In", "No Clock In", "..."
 
@@ -378,15 +605,20 @@ class AttendanceProcessor:
             return "Normal", "On Time", "On Time"
 
     def process_attendance_files(self, files, selected_depts=None, selected_crms=None):
-        """Process all attendance files"""
+        """Process all attendance files - EXACT MATCH with desktop"""
         self.processed_data = []
         filtered_mapping = self.get_filtered_employee_mapping(selected_depts, selected_crms)
+        skipped_files = 0
 
         for file_obj, filename in files:
             try:
                 self.log_message(f"Processing: {filename}")
                 file_obj.seek(0)
                 df = read_excel_file(file_obj, filename)
+
+                # Validate file
+                self.validate_attendance_file(df, filename)
+
                 file_date = self.extract_date_from_filename(filename)
 
                 ac_col = self.find_column(df, ['ac', 'no'], ['AC-No.', 'Ac-No.', 'AC No'])
@@ -410,14 +642,16 @@ class AttendanceProcessor:
                     clock_in = self.get_first_clock_in(row)
                     clock_out = self.get_last_clock_out(row)
 
+                    # Get employee info - try multiple matching strategies
                     emp_info = filtered_mapping.get(ac_no)
-                    if not emp_info:
-                        if name_col and pd.notna(row[name_col]):
-                            row_name = str(row[name_col]).strip().lower()
-                            for key, info in filtered_mapping.items():
-                                if info['name'].lower() == row_name:
-                                    emp_info = info
-                                    break
+
+                    # Strategy 2: Match by name if AC-No. didn't match
+                    if not emp_info and name_col and pd.notna(row[name_col]):
+                        row_name = str(row[name_col]).strip().lower()
+                        for key, info in filtered_mapping.items():
+                            if info['name'].lower() == row_name:
+                                emp_info = info
+                                break
 
                     if emp_info:
                         crm = emp_info['crm']
@@ -425,6 +659,7 @@ class AttendanceProcessor:
                         dept = emp_info['department']
                         position = emp_info['position']
                     else:
+                        # Skip employees not in filtered mapping when filters active
                         if selected_depts or selected_crms:
                             continue
                         name = str(row[name_col]).strip() if name_col and pd.notna(row[name_col]) else "Unknown"
@@ -450,24 +685,31 @@ class AttendanceProcessor:
                     })
 
             except Exception as e:
-                self.log_message(f"Error processing {filename}: {str(e)}", 'error')
+                self.log_message(f"Skipped {filename} due to error: {str(e)}", 'warning')
+                skipped_files += 1
+
+        if skipped_files > 0:
+            self.log_message(f"Skipped {skipped_files} file(s) due to errors", 'warning')
 
         self.log_message(f"Total records processed: {len(self.processed_data)}", 'success')
 
     def fill_leave_records(self, selected_depts=None, selected_crms=None):
         """Apply leave records to attendance data - EXACT MATCH with desktop"""
-        self.log_message("Applying leave records...")
+        self.log_message("Applying leave records to attendance data...")
         off_days = self.config.get('off_days', [4])
 
         if not self.processed_data:
+            self.log_message("No processed data, skipping leave fill")
             return
 
-        all_dates = [record['date'] for record in self.processed_data]
-        min_date = min(all_dates).date()
-        max_date = max(all_dates).date()
+        all_attendance_dates = [record['date'] for record in self.processed_data]
+        min_date = min(all_attendance_dates).date()
+        max_date = max(all_attendance_dates).date()
+        self.log_message(f"Attendance date range: {min_date} to {max_date}")
 
         filtered_mapping = self.get_filtered_employee_mapping(selected_depts, selected_crms)
         valid_crms = set(info['crm'] for info in filtered_mapping.values())
+        self.log_message(f"Valid CRMs from filtered mapping: {len(valid_crms)}")
 
         record_index = {}
         for idx, record in enumerate(self.processed_data):
@@ -479,8 +721,11 @@ class AttendanceProcessor:
             crm_to_emp_info[info['crm']] = info
 
         self.conflict_records = []
-        updated_count = 0
         added_count = 0
+        updated_count = 0
+        skipped_friday = 0
+        skipped_out_of_range = 0
+        skipped_no_master = 0
 
         leave_lookup = {}
         for leave in self.leave_records:
@@ -488,14 +733,21 @@ class AttendanceProcessor:
             leave_date = leave['date'].date()
 
             if crm not in valid_crms:
+                skipped_no_master += 1
                 continue
+
             if leave_date < min_date or leave_date > max_date:
+                skipped_out_of_range += 1
                 continue
+
             if leave['date'].weekday() in off_days:
+                skipped_friday += 1
                 continue
 
             key = (crm, leave_date)
             leave_lookup[key] = leave
+
+        self.log_message(f"Leaves to apply: {len(leave_lookup)}")
 
         for key, leave in leave_lookup.items():
             crm, leave_date = key
@@ -505,6 +757,7 @@ class AttendanceProcessor:
                 existing_record = self.processed_data[idx]
                 existing_status = existing_record['status']
 
+                # Track conflict BEFORE updating
                 if existing_status not in ['Weekend', 'Resigned', 'Absent']:
                     self.conflict_records.append({
                         'crm': crm,
@@ -540,57 +793,107 @@ class AttendanceProcessor:
                     })
                     added_count += 1
 
-        self.log_message(f"Applied {updated_count} leave updates, added {added_count} leave records")
+        self.log_message(f"Updated {updated_count} existing records with leave status")
+        self.log_message(f"Added {added_count} new leave-only records")
+        self.log_message(f"Skipped: {skipped_friday} Fridays, {skipped_out_of_range} out-of-range, {skipped_no_master} not in master")
         if self.conflict_records:
             self.log_message(f"Detected {len(self.conflict_records)} leave vs attendance conflicts", 'warning')
+        self.log_message(f"Total records: {len(self.processed_data)}")
 
     def calculate_penalties(self):
-        """Calculate penalties for all employees - builds penalties_data for Penalties sheet"""
+        """Calculate penalties per employee based on attendance policy - EXACT MATCH with desktop"""
+        self.log_message("Calculating penalties...")
         penalties_config = self.config.get('penalties', {})
+        currency = penalties_config.get('currency', 'EGP')
 
         employee_stats = {}
         for record in self.processed_data:
             crm = record['crm']
-            if crm not in employee_stats:
-                for ac_no, info in self.employee_mapping.items():
-                    if info['crm'] == crm:
-                        employee_stats[crm] = {
-                            'name': info['name'],
-                            'department': info['department'],
-                            'position': info['position'],
-                            'national_id': info.get('national_id', ''),
-                            'vendor': info.get('vendor', ''),
-                            'ps_id': info.get('ps_id', ''),
-                            'join_date': info.get('join_date', ''),
-                            'records': [],
-                            'working_days': 0,
-                            'total_days': 0
-                        }
-                        break
-                else:
-                    employee_stats[crm] = {
-                        'name': record['name'],
-                        'department': record.get('department', ''),
-                        'position': record.get('position', ''),
-                        'national_id': '',
-                        'vendor': '',
-                        'ps_id': '',
-                        'join_date': '',
-                        'records': [],
-                        'working_days': 0,
-                        'total_days': 0
-                    }
+            status = record['status']
 
-            employee_stats[crm]['records'].append(record)
+            if crm not in employee_stats:
+                national_id = ''
+                vendor = ''
+                ps_id = ''
+                join_date = ''
+                for ac_no, emp_info in self.employee_mapping.items():
+                    if emp_info.get('crm') == crm:
+                        national_id = emp_info.get('national_id', '')
+                        vendor = emp_info.get('vendor', '')
+                        ps_id = emp_info.get('ps_id', '')
+                        join_date = emp_info.get('join_date', '')
+                        break
+
+                employee_stats[crm] = {
+                    'name': record.get('name', ''),
+                    'department': record.get('department', ''),
+                    'position': record.get('position', ''),
+                    'national_id': national_id,
+                    'vendor': vendor,
+                    'ps_id': ps_id,
+                    'join_date': join_date,
+                    'late_count': 0,
+                    'missing_punch_count': 0,
+                    'absence_count': 0,
+                    'early_departure_count': 0,
+                    'total_days': 0,
+                    'working_days': 0
+                }
+
             employee_stats[crm]['total_days'] += 1
-            if record['status'] not in ['Weekend', 'Resigned']:
+
+            if status == 'Late':
+                employee_stats[crm]['late_count'] += 1
+                employee_stats[crm]['working_days'] += 1
+            elif 'Missing Punch' in status:
+                employee_stats[crm]['missing_punch_count'] += 1
+                employee_stats[crm]['working_days'] += 1
+            elif status == 'Absent':
+                employee_stats[crm]['absence_count'] += 1
+            elif status in ['Normal', 'Present']:
                 employee_stats[crm]['working_days'] += 1
 
         penalties_summary = {}
         for crm, stats in employee_stats.items():
-            late_count = sum(1 for r in stats['records'] if r['status'] == 'Late')
-            missing_count = sum(1 for r in stats['records'] if 'Missing Punch' in r['status'])
-            absence_count = sum(1 for r in stats['records'] if r['status'] == 'Absent')
+            late_count = stats['late_count']
+            missing_count = stats['missing_punch_count']
+            absence_count = stats['absence_count']
+
+            # Calculate late penalties (cumulative: 1st=100, 2nd=200, 3rd=500, 4th+=500)
+            late_penalty = 0
+            late_warnings = 0
+            for i in range(late_count):
+                if i == 0:
+                    late_penalty += penalties_config.get('late_1st', 100)
+                elif i == 1:
+                    late_penalty += penalties_config.get('late_2nd', 200)
+                elif i == 2:
+                    late_penalty += penalties_config.get('late_3rd', 500)
+                    late_warnings += 1
+                else:
+                    late_penalty += penalties_config.get('late_4th_plus', 500)
+
+            # Calculate missing punch deductions
+            missing_threshold = penalties_config.get('missing_punch_threshold', 3)
+            missing_warning_threshold = penalties_config.get('missing_punch_warning_threshold', 6)
+            missing_deduction_rate = penalties_config.get('missing_punch_deduction', 0.5)
+
+            missing_deduction = 0
+            missing_warnings = 0
+            if missing_count > missing_threshold:
+                missing_deduction = (missing_count - missing_threshold) * missing_deduction_rate
+            if missing_count > missing_warning_threshold:
+                missing_warnings = 1
+
+            # Calculate absence deductions (2 days per absence)
+            absence_deduction_rate = penalties_config.get('absence_deduction', 2)
+            absence_deduction = absence_count * absence_deduction_rate
+            absence_warnings = 1 if absence_count > 0 else 0
+
+            # Total calculations
+            total_penalty_egp = late_penalty
+            total_deduction_days = missing_deduction + absence_deduction
+            total_warnings = late_warnings + missing_warnings + absence_warnings
 
             penalties_summary[crm] = {
                 'name': stats['name'],
@@ -601,13 +904,20 @@ class AttendanceProcessor:
                 'ps_id': stats.get('ps_id', ''),
                 'join_date': stats.get('join_date', ''),
                 'late_count': late_count,
+                'late_penalty': late_penalty,
                 'missing_punch_count': missing_count,
+                'missing_deduction': missing_deduction,
                 'absence_count': absence_count,
+                'absence_deduction': absence_deduction,
+                'total_penalty_egp': total_penalty_egp,
+                'total_deduction_days': total_deduction_days,
+                'total_warnings': total_warnings,
                 'working_days': stats['working_days'],
                 'total_days': stats['total_days']
             }
 
         self.penalties_data = penalties_summary
+        self.log_message(f"Calculated penalties for {len(penalties_summary)} employees", 'success')
         return penalties_summary
 
     def create_excel_report(self):
@@ -629,28 +939,39 @@ class AttendanceProcessor:
 
     def _apply_status_color(self, cell, status):
         """Apply color coding - EXACT MATCH with desktop version"""
+        # Light Purple - Backdated leaves (BD) - check first before other rules
         if '(BD)' in status:
             cell.fill = PatternFill(start_color='E1D5E7', end_color='E1D5E7', fill_type='solid')
+        # Green - No deduction statuses
         elif status in ['Normal', 'Present', 'Late (Approved)', 'Annual Leave', 'Casual Leave',
                         'Marriage Leave', 'Paternity Leave', 'Maternity Leave', 'Bereavement Leave',
                         'Military Call Leave', 'Early Departure (Approved)']:
             cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')
+        # Yellow - Late with deduction
         elif status == 'Late':
             cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')
+        # Red - Absent
         elif status == 'Absent':
             cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')
+        # Pink - Missing Punch types
         elif 'Missing Punch' in status:
             cell.fill = PatternFill(start_color='FFD9E6', end_color='FFD9E6', fill_type='solid')
+        # Light Blue - Leave types with deduction
         elif status in ['Sick Leave', 'Unpaid Leave', 'Unpaid leave']:
             cell.fill = PatternFill(start_color='BDD7EE', end_color='BDD7EE', fill_type='solid')
+        # Orange - Half day / Early departure / Early Leave (HD)
         elif status in ['Early Departure', 'Half Day', 'Early Leave (HD)', 'Early Leave (HD) (BD)']:
             cell.fill = PatternFill(start_color='FCE4D6', end_color='FCE4D6', fill_type='solid')
+        # Gray - Weekend
         elif status == 'Weekend':
             cell.fill = PatternFill(start_color='D9D9D9', end_color='D9D9D9', fill_type='solid')
+        # Light Gray - Resigned
         elif status == 'Resigned':
             cell.fill = PatternFill(start_color='C0C0C0', end_color='C0C0C0', fill_type='solid')
+        # Light green - Worked on Day Off
         elif status == 'Worked on Day Off':
             cell.fill = PatternFill(start_color='E2EFDA', end_color='E2EFDA', fill_type='solid')
+        # Default light blue for other leave types
         elif 'Leave' in status:
             cell.fill = PatternFill(start_color='E6F3FF', end_color='E6F3FF', fill_type='solid')
 
@@ -679,7 +1000,7 @@ class AttendanceProcessor:
         # Title - EXACT MATCH
         ws.merge_cells('A1:' + get_column_letter(len(dates) + 3) + '1')
         title_cell = ws['A1']
-        title_cell.value = "📊 Enhanced Attendance Summary Report"
+        title_cell.value = "Enhanced Attendance Summary Report"
         title_cell.font = Font(name='Calibri', size=16, bold=True, color='FFFFFF')
         title_cell.fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
         title_cell.alignment = Alignment(horizontal='center', vertical='center')
@@ -822,7 +1143,7 @@ class AttendanceProcessor:
         # Title - EXACT MATCH
         ws.merge_cells('A1:L1')
         title_cell = ws['A1']
-        title_cell.value = "📈 Individual Employee Analytics"
+        title_cell.value = "Individual Employee Analytics"
         title_cell.font = Font(size=16, bold=True, color='FFFFFF')
         title_cell.fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
         title_cell.alignment = Alignment(horizontal='center', vertical='center')
@@ -894,7 +1215,7 @@ class AttendanceProcessor:
         # Title - EXACT MATCH
         ws.merge_cells('A1:D1')
         title_cell = ws['A1']
-        title_cell.value = "⚠️ Attendance Alerts & Warnings"
+        title_cell.value = "Attendance Alerts & Warnings"
         title_cell.font = Font(size=16, bold=True, color='FFFFFF')
         title_cell.fill = PatternFill(start_color='DC3545', end_color='DC3545', fill_type='solid')
         title_cell.alignment = Alignment(horizontal='center', vertical='center')
@@ -956,7 +1277,7 @@ class AttendanceProcessor:
         if alert_count == 0:
             ws.merge_cells('A5:D5')
             cell = ws['A5']
-            cell.value = "✅ No attendance issues detected!"
+            cell.value = "No attendance issues detected!"
             cell.fill = PatternFill(start_color='D4EDDA', end_color='D4EDDA', fill_type='solid')
             cell.font = Font(bold=True)
             cell.alignment = Alignment(horizontal='center', vertical='center')
@@ -1216,22 +1537,22 @@ class AttendanceProcessor:
             ws.cell(r, 25).fill = PatternFill(start_color='E1D5E7', end_color='E1D5E7', fill_type='solid')
             ws.cell(r, 25).font = Font(bold=True, color='6B3FA0')
 
-        # Policy legend
+        # Policy legend - EXACT MATCH with desktop
         legend_row = totals_row + 3
         ws.cell(legend_row, 1, "Deduction Policy Reference:").font = Font(bold=True)
         legend_row += 1
-        ws.cell(legend_row, 1, f"• Late: {currency} {late_1st} (1st), {currency} {late_2nd} (2nd), {currency} {late_3rd}+ (3rd+) + Warning | Late (Approved): No Deduction")
+        ws.cell(legend_row, 1, f"Late: {currency} {late_1st} (1st), {currency} {late_2nd} (2nd), {currency} {late_3rd}+ (3rd+) + Warning | Late (Approved): No Deduction")
         legend_row += 1
-        ws.cell(legend_row, 1, f"• Missing Punch (all types): {missing_deduction_rate} day after {missing_threshold} occurrences, warning after 6")
+        ws.cell(legend_row, 1, f"Missing Punch (all types): {missing_deduction_rate} day after {missing_threshold} occurrences, warning after 6")
         legend_row += 1
-        ws.cell(legend_row, 1, f"• Absent: {absence_deduction_rate} days | Early Departure/Half Day: {early_dep_deduction} day | Sick Leave: {sick_leave_deduction} day | Unpaid Leave: {unpaid_leave_deduction} day")
+        ws.cell(legend_row, 1, f"Absent: {absence_deduction_rate} days | Early Departure/Half Day: {early_dep_deduction} day | Sick Leave: {sick_leave_deduction} day | Unpaid Leave: {unpaid_leave_deduction} day")
         legend_row += 1
-        ws.cell(legend_row, 1, "• No Deduction: Normal, Late (Approved), Early Departure (Approved), Annual/Casual/Marriage/Paternity/Maternity/Bereavement/Military Call Leave")
+        ws.cell(legend_row, 1, "No Deduction: Normal, Late (Approved), Early Departure (Approved), Annual/Casual/Marriage/Paternity/Maternity/Bereavement/Military Call Leave")
         legend_row += 1
-        ws.cell(legend_row, 1, "• BACKDATED LEAVES (BD): Leaves marked with (BD) suffix are transferred from previous months - shown in purple, HR to review manually")
+        ws.cell(legend_row, 1, "BACKDATED LEAVES (BD): Leaves marked with (BD) suffix are transferred from previous months - shown in purple, HR to review manually")
         ws.cell(legend_row, 1).font = Font(bold=True, color='6B3FA0')
         legend_row += 1
-        ws.cell(legend_row, 1, "• Note: This sheet is linked to Summary Report - use the dropdown to change status and penalties will auto-update")
+        ws.cell(legend_row, 1, "Note: This sheet is linked to Summary Report - use the dropdown to change status and penalties will auto-update")
         ws.cell(legend_row, 1).font = Font(italic=True, color='0066CC')
 
     def create_duplicates_sheet(self, wb):
@@ -1241,9 +1562,9 @@ class AttendanceProcessor:
         ws.merge_cells('A1:G1')
         title = ws['A1']
         title.value = "Leave vs Attendance Conflicts"
-        title.font = Font(size=14, bold=True, color='FFFFFF')
+        title.font = Font(name='Segoe UI', size=14, bold=True, color='FFFFFF')
         title.fill = PatternFill(start_color='FF6600', end_color='FF6600', fill_type='solid')
-        title.alignment = Alignment(horizontal='center')
+        title.alignment = Alignment(horizontal='center', vertical='center')
         ws.row_dimensions[1].height = 30
 
         ws.merge_cells('A2:G2')
@@ -1253,18 +1574,21 @@ class AttendanceProcessor:
         subtitle.alignment = Alignment(horizontal='center')
 
         headers = ['CRM', 'Name', 'Date', 'Original Attendance Status', 'Leave Type Applied', 'Clock In', 'Clock Out']
+        header_row = 4
         for col, header in enumerate(headers, 1):
-            cell = ws.cell(4, col, header)
+            cell = ws.cell(header_row, col, header)
             cell.font = Font(bold=True, color='FFFFFF', size=10)
             cell.fill = PatternFill(start_color='FF6600', end_color='FF6600', fill_type='solid')
-            cell.alignment = Alignment(horizontal='center')
+            cell.alignment = Alignment(horizontal='center', vertical='center')
             cell.border = Border(
                 left=Side(style='thin'), right=Side(style='thin'),
                 top=Side(style='thin'), bottom=Side(style='thin')
             )
 
+        ws.row_dimensions[header_row].height = 25
+
         if self.conflict_records:
-            row = 5
+            data_row = 5
             for conflict in sorted(self.conflict_records, key=lambda x: (x['crm'], x['date'])):
                 clock_in = conflict.get('clock_in')
                 clock_out = conflict.get('clock_out')
@@ -1274,24 +1598,24 @@ class AttendanceProcessor:
                 date_val = conflict['date']
                 date_str = date_val.strftime('%d-%b-%Y') if hasattr(date_val, 'strftime') else str(date_val)
 
-                ws.cell(row, 1, conflict['crm'])
-                ws.cell(row, 2, conflict['name'])
-                ws.cell(row, 3, date_str)
-                ws.cell(row, 4, conflict['attendance_status'])
-                ws.cell(row, 5, conflict['leave_type'])
-                ws.cell(row, 6, clock_in_str)
-                ws.cell(row, 7, clock_out_str)
+                ws.cell(data_row, 1, conflict['crm'])
+                ws.cell(data_row, 2, conflict['name'])
+                ws.cell(data_row, 3, date_str)
+                ws.cell(data_row, 4, conflict['attendance_status'])
+                ws.cell(data_row, 5, conflict['leave_type'])
+                ws.cell(data_row, 6, clock_in_str)
+                ws.cell(data_row, 7, clock_out_str)
 
                 for col in range(1, 8):
-                    cell = ws.cell(row, col)
+                    cell = ws.cell(data_row, col)
                     cell.fill = PatternFill(start_color='FFF3CD', end_color='FFF3CD', fill_type='solid')
                     cell.border = Border(
                         left=Side(style='thin'), right=Side(style='thin'),
                         top=Side(style='thin'), bottom=Side(style='thin')
                     )
-                row += 1
+                data_row += 1
 
-            summary_row = row + 1
+            summary_row = data_row + 1
             ws.cell(summary_row, 1, f"Total Conflicts: {len(self.conflict_records)}")
             ws.cell(summary_row, 1).font = Font(bold=True)
         else:
@@ -1299,7 +1623,7 @@ class AttendanceProcessor:
             no_conflict = ws['A5']
             no_conflict.value = "No conflicts detected - All leave records are consistent with attendance data"
             no_conflict.font = Font(size=11, color='28A745')
-            no_conflict.alignment = Alignment(horizontal='center')
+            no_conflict.alignment = Alignment(horizontal='center', vertical='center')
             ws.row_dimensions[5].height = 30
 
         for i, width in enumerate([15, 20, 12, 25, 20, 12, 12], 1):
@@ -1325,15 +1649,23 @@ def main():
     if 'attendance_files' not in st.session_state:
         st.session_state.attendance_files = []
 
-    st.title("📊 Attendance Dashboard v2.2")
+    st.title("Attendance Dashboard v2.2")
     st.markdown("*Web-based attendance processing - EXACT MATCH with desktop version*")
 
     with st.sidebar:
-        st.header("⚙️ Settings")
+        st.header("Settings")
+
+        # Work Hours
+        st.subheader("Work Hours")
+        work_start = st.text_input("Start Time", value=st.session_state.processor.config.get('work_start_time', '12:00 PM'))
+        work_end = st.text_input("End Time", value=st.session_state.processor.config.get('work_end_time', '9:00 PM'))
 
         late_threshold = st.time_input(
             "Late Threshold",
-            value=datetime.strptime("12:00", "%H:%M").time()
+            value=datetime.strptime(
+                st.session_state.processor.config.get('late_threshold', '12:00 PM'),
+                "%I:%M %p"
+            ).time()
         )
 
         off_days = st.multiselect(
@@ -1346,13 +1678,40 @@ def main():
                    "Friday": 4, "Saturday": 5, "Sunday": 6}
         off_day_nums = [day_map[d] for d in off_days]
 
+        st.session_state.processor.config['work_start_time'] = work_start
+        st.session_state.processor.config['work_end_time'] = work_end
         st.session_state.processor.config['late_threshold'] = late_threshold.strftime("%I:%M %p")
         st.session_state.processor.config['off_days'] = off_day_nums
+
+        # Alert Thresholds
+        st.divider()
+        st.subheader("Alert Thresholds")
+        current_thresholds = st.session_state.processor.config.get('alert_thresholds', {})
+
+        high_absences = st.number_input("High Absences (days)",
+                                        value=current_thresholds.get('high_absences', 3),
+                                        min_value=1, step=1)
+        frequent_late = st.number_input("Frequent Late (count)",
+                                        value=current_thresholds.get('frequent_late', 5),
+                                        min_value=1, step=1)
+        missing_punches_threshold = st.number_input("Missing Punches (count)",
+                                                     value=current_thresholds.get('missing_punches', 5),
+                                                     min_value=1, step=1)
+        low_attendance_rate = st.number_input("Low Attendance Rate (%)",
+                                              value=float(current_thresholds.get('low_attendance_rate', 75.0)),
+                                              min_value=0.0, max_value=100.0, step=5.0)
+
+        st.session_state.processor.config['alert_thresholds'] = {
+            'high_absences': high_absences,
+            'frequent_late': frequent_late,
+            'missing_punches': missing_punches_threshold,
+            'low_attendance_rate': low_attendance_rate
+        }
 
         st.divider()
 
         if st.session_state.master_loaded:
-            st.header("🔍 Filters")
+            st.header("Filters")
 
             depts = sorted(set(info['department'] for info in st.session_state.processor.employee_mapping.values()
                                if info['department']))
@@ -1367,55 +1726,59 @@ def main():
 
             filtered_count = len(st.session_state.processor.get_filtered_employee_mapping(selected_depts, selected_crms))
             total_count = len(st.session_state.processor.employee_mapping)
-            st.info(f"📋 {filtered_count} / {total_count} employees selected")
+            st.info(f"Showing {filtered_count} of {total_count} employees")
 
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        st.subheader("📁 Master Data")
+        st.subheader("Master Data")
         master_file = st.file_uploader("Upload Master Data", type=['xlsx', 'xls'], key='master_upload')
 
         if master_file is not None and not st.session_state.master_loaded:
             with st.spinner("Loading master data..."):
                 if st.session_state.processor.load_master_data(master_file, master_file.name):
                     st.session_state.master_loaded = True
-                    st.success(f"✅ Loaded {len(st.session_state.processor.employee_mapping)} employees")
+                    st.success(f"Loaded {len(st.session_state.processor.employee_mapping)} employees")
                 else:
-                    st.error("❌ Failed to load master data")
+                    for log in st.session_state.processor.logs:
+                        if log['level'] == 'error':
+                            st.error(log['message'])
 
         if st.session_state.master_loaded:
-            st.success(f"✅ {len(st.session_state.processor.employee_mapping)} employees loaded")
+            st.success(f"{len(st.session_state.processor.employee_mapping)} employees loaded")
 
     with col2:
-        st.subheader("📅 Attendance Files")
+        st.subheader("Attendance Files")
         attendance_files = st.file_uploader("Upload Attendance Files", type=['xlsx', 'xls'],
                                             accept_multiple_files=True, key='attendance_upload')
 
         if attendance_files:
             st.session_state.attendance_files = [(f, f.name) for f in attendance_files]
             st.session_state.attendance_loaded = True
-            st.success(f"✅ {len(attendance_files)} file(s) uploaded")
+            st.success(f"{len(attendance_files)} file(s) uploaded")
 
     with col3:
-        st.subheader("🏖️ Leave Sheet")
+        st.subheader("Leave Sheet")
         leave_file = st.file_uploader("Upload Leave Sheet", type=['xlsx', 'xls'], key='leave_upload')
 
         if leave_file is not None and not st.session_state.leave_loaded:
             with st.spinner("Loading leave data..."):
                 if st.session_state.processor.load_leave_data(leave_file, leave_file.name):
                     st.session_state.leave_loaded = True
-                    st.success(f"✅ Loaded {len(st.session_state.processor.leave_records)} leave records")
+                    st.success(f"Loaded {len(st.session_state.processor.leave_records)} leave records")
                 else:
-                    st.error("❌ Failed to load leave data")
+                    for log in st.session_state.processor.logs:
+                        if log['level'] == 'error':
+                            st.error(log['message'])
 
         if st.session_state.leave_loaded:
-            st.success(f"✅ {len(st.session_state.processor.leave_records)} leave records loaded")
+            st.success(f"{len(st.session_state.processor.leave_records)} leave records loaded")
 
     st.divider()
 
     ready = st.session_state.master_loaded and st.session_state.attendance_loaded
 
-    if st.button("🚀 GENERATE REPORT", type="primary", disabled=not ready, use_container_width=True):
+    if st.button("GENERATE REPORT", type="primary", disabled=not ready, use_container_width=True):
         with st.spinner("Processing attendance data..."):
             progress_bar = st.progress(0)
             status_text = st.empty()
@@ -1423,34 +1786,46 @@ def main():
             selected_depts = getattr(st.session_state, 'selected_depts', None)
             selected_crms = getattr(st.session_state, 'selected_crms', None)
 
+            # Validate filter selection
+            if selected_depts is not None or selected_crms is not None:
+                filtered = st.session_state.processor.get_filtered_employee_mapping(selected_depts, selected_crms)
+                if not filtered:
+                    st.warning("No employees match the current filter selection. Please adjust your Department/CRM filters.")
+                    st.stop()
+
             status_text.text("Processing attendance files...")
-            progress_bar.progress(20)
+            progress_bar.progress(10)
             st.session_state.processor.process_attendance_files(
                 st.session_state.attendance_files, selected_depts, selected_crms
             )
+
+            progress_bar.progress(30)
 
             if st.session_state.processor.leave_records:
                 status_text.text("Applying leave records...")
                 progress_bar.progress(50)
                 st.session_state.processor.fill_leave_records(selected_depts, selected_crms)
 
+            status_text.text("Calculating penalties...")
+            progress_bar.progress(70)
+
             status_text.text("Generating Excel report...")
             progress_bar.progress(80)
             excel_data = st.session_state.processor.create_excel_report()
 
             progress_bar.progress(100)
-            status_text.text("✅ Report generated successfully!")
+            status_text.text("Report generated successfully!")
 
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             st.download_button(
-                label="📥 Download Report",
+                label="Download Report",
                 data=excel_data,
                 file_name=f"Attendance_Report_{timestamp}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 type="primary"
             )
 
-            with st.expander("📋 Processing Log"):
+            with st.expander("Processing Log"):
                 for log in st.session_state.processor.logs:
                     if log['level'] == 'error':
                         st.error(log['message'])
@@ -1462,15 +1837,15 @@ def main():
                         st.info(log['message'])
 
             if st.session_state.processor.conflict_records:
-                st.warning(f"⚠️ Detected {len(st.session_state.processor.conflict_records)} leave vs attendance conflicts")
+                st.warning(f"Detected {len(st.session_state.processor.conflict_records)} leave vs attendance conflicts")
                 with st.expander("View Conflicts"):
                     conflict_df = pd.DataFrame(st.session_state.processor.conflict_records)
                     st.dataframe(conflict_df)
 
     if not ready:
-        st.info("📌 Please upload Master Data and at least one Attendance file to generate a report.")
+        st.info("Please upload Master Data and at least one Attendance file to generate a report.")
 
-    if st.button("🔄 Reset All"):
+    if st.button("Reset All"):
         st.session_state.processor = AttendanceProcessor()
         st.session_state.master_loaded = False
         st.session_state.attendance_loaded = False

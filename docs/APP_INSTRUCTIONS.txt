@@ -1,0 +1,205 @@
+# Attendance Dashboard v2.2 - Complete Guide
+
+---
+
+## PART 1: RUNNING THE APPLICATION
+
+### Method A: Run with Python
+   Double-click: RUN_APP.bat
+
+### Method B: Create Standalone EXE
+   Double-click: CREATE_EXE.bat
+   Find EXE at: dist\AttendanceDashboard.exe
+
+### Method C: Manual Run
+   pip install -r requirements.txt
+   python attendance_dashboard_app.py
+
+---
+
+## PART 2: USING THE APPLICATION
+
+### Step 1: Select Master Data
+- Click "Browse" next to Master Data
+- Choose Excel file with employee info
+- Required columns: PS ID (or AC-No.), CRM, Name
+
+### Step 2: Select Attendance Files
+- Click "Browse" next to Attendance Files
+- Choose one or more daily attendance Excel files
+- Use Ctrl+Click to select multiple files
+
+### Step 3: Select Leave Sheet (Optional)
+- Click "Browse" next to Leave Sheet
+- Choose Excel file with leave records
+- Supports matrix or vertical format
+
+### Step 4: Generate Report
+- Click "GENERATE ATTENDANCE REPORT" (top button)
+- Report saves to Documents folder
+- Opens automatically when done
+
+### Step 5: Configure Settings (Optional)
+- Click "Settings" in header
+- Adjust work hours, late threshold
+- Settings persist across sessions
+
+---
+
+## PART 3: KEYBOARD SHORTCUTS
+
+| Key | Action |
+|-----|--------|
+| Ctrl+M | Select Master Data |
+| Ctrl+A | Select Attendance Files |
+| Ctrl+L | Select Leave Sheet |
+| Ctrl+G | Generate Report |
+| Ctrl+R | Clear All |
+
+---
+
+## PART 4: INPUT FILE FORMATS
+
+### Master Data Format
+| PS ID  | CRM        | Name         | Department |
+|--------|------------|--------------|------------|
+| 185680 | EGCC-Mina  | Mina Ibrahim | Operations |
+
+### Attendance Format
+| AC-No. | Name | Date     | Clock In 1 | Clock Out 1 |
+|--------|------|----------|------------|-------------|
+| 185680 | Mina | 1/5/2026 | 9:00 AM    | 5:30 PM     |
+
+### Leave Format (Matrix)
+| CRM       | 1-Jan        | 2-Jan | 3-Jan      |
+|-----------|--------------|-------|------------|
+| EGCC-Mina | Annual Leave |       | Sick Leave |
+
+### Leave Format (Vertical)
+| CRM       | Date       | Leave Type   |
+|-----------|------------|--------------|
+| EGCC-Mina | 2026-01-01 | Annual Leave |
+
+---
+
+## PART 5: OUTPUT REPORT (4 SHEETS)
+
+### Sheet 1: Summary Report
+- Rows: Employees (by CRM)
+- Columns: All dates in range
+- Values: Status with color coding
+
+### Sheet 2: Individual Analytics
+- Total days, Normal days, Late days
+- Absent days, Missing punches
+- Attendance rate %, Punctuality rate %
+
+### Sheet 3: Alerts & Warnings
+- High absences (3+ days)
+- Frequent late arrivals (5+ times)
+- Missing punches (5+ times)
+- Low attendance rate (<75%)
+
+### Sheet 4: Penalties (NEW)
+Automated penalty calculations based on Policy 2026:
+
+| Column | Description |
+|--------|-------------|
+| Late Count | Number of late arrivals |
+| Late Penalty (EGP) | 1st=100, 2nd=200, 3rd+=500 |
+| Missing Punches | Clock in/out missing count |
+| Punch Deduction | 0.5 day after 3 occurrences |
+| Absences | Days absent |
+| Absence Deduction | 2 days per absence |
+| Total Penalty | Sum in EGP |
+| Total Deduction | Sum in days |
+| Warnings | Warning count |
+
+---
+
+## PART 6: PENALTY RULES (POLICY 2026)
+
+| Violation | Penalty |
+|-----------|---------|
+| Late (1st) | EGP 100 |
+| Late (2nd) | EGP 200 |
+| Late (3rd+) | EGP 500 + warning |
+| Missing Punch (>3x) | 0.5 day deduction |
+| Missing Punch (>6x) | + warning |
+| Absence | 2 days deduction |
+
+---
+
+## PART 7: STATUS TYPES & COLORS
+
+| Status           | Color      | When Applied              |
+|------------------|------------|---------------------------|
+| Normal           | Green      | On time, clocked in/out   |
+| Late             | Yellow     | Clock-in after 12:00 PM   |
+| Absent           | Red        | No attendance on work day |
+| Missing Punch    | Pink       | Missing clock in or out   |
+| Weekend          | Gray       | Friday (always)           |
+| Leave            | Blue       | Approved leave            |
+
+---
+
+## PART 8: FRIDAY LOGIC
+
+Friday is company-wide OFF day:
+- Always displays as "Weekend" (gray)
+- Leave records on Friday are IGNORED
+- No attendance on Friday = Weekend (not Absent)
+- Counts as normal day in statistics
+
+---
+
+## PART 9: CONFIGURATION
+
+### Settings Dialog Options:
+- Work Start Time: Default 12:00 PM
+- Work End Time: Default 9:00 PM
+- Late Threshold: Default 12:00 PM
+- OFF Days: Default Friday
+
+### Config File Location:
+   Windows: %USERPROFILE%\.attendance_dashboard\config.json
+
+---
+
+## PART 10: TROUBLESHOOTING
+
+### "Python is not recognized"
+- Install Python from python.org
+- Check "Add Python to PATH" during installation
+
+### "Module not found" error
+- Run: pip install -r requirements.txt
+
+### CRM shows names instead of codes
+- Ensure PS ID in master matches AC-No. in attendance
+- IDs are normalized automatically
+
+### Leaves not appearing
+- Ensure CRM column exists in leave sheet
+- CRM values must match exactly
+- Leave on Friday shows as Weekend (expected)
+
+### Log files for debugging
+   Location: %USERPROFILE%\.attendance_dashboard\logs\app.log
+
+---
+
+## PART 11: FILE LOCATIONS
+
+### Output Reports:
+   %USERPROFILE%\Documents\Attendance_Report_*.xlsx
+
+### Settings:
+   %USERPROFILE%\.attendance_dashboard\config.json
+
+### Logs:
+   %USERPROFILE%\.attendance_dashboard\logs\app.log
+
+---
+
+v2.2 | January 2026 | Production Ready
