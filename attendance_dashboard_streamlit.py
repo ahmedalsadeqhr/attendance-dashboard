@@ -24,8 +24,7 @@ def read_excel_file(file_obj, filename):
         return pd.read_excel(file_obj)
 
 
-# Default configuration - EXACT MATCH with desktop version
-DEFAULT_CONFIG = {
+# Default configurationDEFAULT_CONFIG = {
     'work_start_time': '12:00 PM',
     'work_end_time': '9:00 PM',
     'late_threshold': '12:00 PM',
@@ -71,8 +70,7 @@ class AttendanceProcessor:
         """Normalize ID values by converting floats to integers before string conversion.
 
         This fixes the mismatch between float PS IDs (185680.0) and int AC-No (185680).
-        EXACT MATCH with desktop version.
-        """
+               """
         if pd.isna(value):
             return ""
         # If it's a float that represents a whole number, convert to int first
@@ -90,7 +88,7 @@ class AttendanceProcessor:
     def find_column(self, df, search_terms, exact_matches=None):
         """Find column in dataframe using multiple search strategies.
 
-        EXACT MATCH with desktop version - 4 strategies.
+        - 4 strategies.
 
         Args:
             df: DataFrame to search
@@ -128,7 +126,7 @@ class AttendanceProcessor:
         return None
 
     def validate_master_data(self, df):
-        """Validate master data has required columns. EXACT MATCH with desktop."""
+        """Validate master data has required columns."""
         df_cols_lower = [str(c).lower() for c in df.columns]
 
         has_id_col = any('ac' in col and 'no' in col for col in df_cols_lower) or \
@@ -155,7 +153,7 @@ class AttendanceProcessor:
         return True
 
     def validate_attendance_file(self, df, filename):
-        """Validate attendance file has required columns. EXACT MATCH with desktop."""
+        """Validate attendance file has required columns."""
         required_patterns = [
             ('ac', 'no'),
             ('name',),
@@ -174,7 +172,7 @@ class AttendanceProcessor:
         return True
 
     def validate_leave_sheet(self, df):
-        """Validate leave sheet has required structure. EXACT MATCH with desktop."""
+        """Validate leave sheet has required structure."""
         date_cols = [c for c in df.columns if self._is_date_column(c)]
 
         if len(date_cols) > 0:
@@ -195,7 +193,7 @@ class AttendanceProcessor:
         return True
 
     def _is_date_column(self, col_name):
-        """Check if column name looks like a date. EXACT MATCH with desktop."""
+        """Check if column name looks like a date."""
         if isinstance(col_name, datetime):
             return True
         if hasattr(col_name, 'date'):
@@ -211,7 +209,7 @@ class AttendanceProcessor:
         return any(re.search(pattern, col_str) for pattern in date_patterns)
 
     def _parse_date_field(self, row, date_col):
-        """Parse a date field from a row. EXACT MATCH with desktop."""
+        """Parse a date field from a row."""
         if not date_col or pd.isna(row[date_col]):
             return ""
         try:
@@ -229,7 +227,7 @@ class AttendanceProcessor:
             return str(row[date_col]).strip()
 
     def load_master_data(self, file_obj, filename):
-        """Load and process master data file - EXACT MATCH with desktop"""
+        """Load and process master data file -"""
         try:
             self.log_message("Loading master data...")
             df = read_excel_file(file_obj, filename)
@@ -305,7 +303,7 @@ class AttendanceProcessor:
             return False
 
     def load_leave_data(self, file_obj, filename):
-        """Load and process leave data file - EXACT MATCH with desktop"""
+        """Load and process leave data file -"""
         try:
             self.log_message("Loading leave data...")
             self.leave_records = []
@@ -364,7 +362,7 @@ class AttendanceProcessor:
 
     def parse_leave_matrix(self, df):
         """Parse leave data in matrix format - optimized for performance.
-        EXACT MATCH with desktop version."""
+       ."""
         current_year = datetime.now().year
 
         crm_col = self.find_column(df, ['crm'], ['CRM'])
@@ -432,7 +430,7 @@ class AttendanceProcessor:
                     pass
 
     def parse_leave_vertical(self, df):
-        """Parse leave data in vertical format - EXACT MATCH with desktop"""
+        """Parse leave data in vertical format -"""
         crm_col = self.find_column(df, ['crm', 'employee'], ['CRM', 'Employee CRM'])
         date_col = self.find_column(df, ['date'], ['Date'])
         type_col = self.find_column(df, ['type', 'leave'], ['Leave Type', 'Type'])
@@ -483,7 +481,7 @@ class AttendanceProcessor:
         return filtered
 
     def extract_date_from_filename(self, filename):
-        """Extract date from attendance filename - EXACT MATCH with desktop strategies"""
+        """Extract date from attendance filename -"""
         try:
             # Strategy 1: Try to extract full date (YYYY-MM-DD format)
             date_match = re.search(r'(\d{4})-(\d{2})-(\d{2})', filename)
@@ -534,7 +532,7 @@ class AttendanceProcessor:
         return None
 
     def determine_status(self, clock_in, clock_out, date, crm):
-        """Determine attendance status - EXACT MATCH with desktop"""
+        """Determine attendance status -"""
         day_of_week = date.weekday()
 
         # Check if employee has resigned (before all other checks)
@@ -605,7 +603,7 @@ class AttendanceProcessor:
             return "Normal", "On Time", "On Time"
 
     def process_attendance_files(self, files, selected_depts=None, selected_crms=None):
-        """Process all attendance files - EXACT MATCH with desktop"""
+        """Process all attendance files -"""
         self.processed_data = []
         filtered_mapping = self.get_filtered_employee_mapping(selected_depts, selected_crms)
         skipped_files = 0
@@ -694,7 +692,7 @@ class AttendanceProcessor:
         self.log_message(f"Total records processed: {len(self.processed_data)}", 'success')
 
     def fill_leave_records(self, selected_depts=None, selected_crms=None):
-        """Apply leave records to attendance data - EXACT MATCH with desktop"""
+        """Apply leave records to attendance data -"""
         self.log_message("Applying leave records to attendance data...")
         off_days = self.config.get('off_days', [4])
 
@@ -801,7 +799,7 @@ class AttendanceProcessor:
         self.log_message(f"Total records: {len(self.processed_data)}")
 
     def calculate_penalties(self):
-        """Calculate penalties per employee based on attendance policy - EXACT MATCH with desktop"""
+        """Calculate penalties per employee based on attendance policy -"""
         self.log_message("Calculating penalties...")
         penalties_config = self.config.get('penalties', {})
         currency = penalties_config.get('currency', 'EGP')
@@ -921,7 +919,7 @@ class AttendanceProcessor:
         return penalties_summary
 
     def create_excel_report(self):
-        """Create the final Excel report - EXACT MATCH with desktop version"""
+        """Create the final Excel report -"""
         wb = openpyxl.Workbook()
         wb.remove(wb.active)
 
@@ -938,7 +936,7 @@ class AttendanceProcessor:
         return output.getvalue()
 
     def _apply_status_color(self, cell, status):
-        """Apply color coding - EXACT MATCH with desktop version"""
+        """Apply color coding -"""
         # Light Green - Refund leaves (Refund) - check first before other rules
         if '(Refund)' in status:
             cell.fill = PatternFill(start_color='E2EFDA', end_color='E2EFDA', fill_type='solid')
@@ -979,7 +977,7 @@ class AttendanceProcessor:
             cell.fill = PatternFill(start_color='E6F3FF', end_color='E6F3FF', fill_type='solid')
 
     def create_summary_sheet(self, wb):
-        """Create summary sheet - EXACT MATCH with desktop version"""
+        """Create summary sheet -"""
         ws = wb.create_sheet("Summary Report", 0)
 
         crms = sorted(set(r['crm'] for r in self.processed_data))
@@ -1000,8 +998,7 @@ class AttendanceProcessor:
         for record in self.processed_data:
             matrix[record['crm']][record['date']] = record['status']
 
-        # Title - EXACT MATCH
-        ws.merge_cells('A1:' + get_column_letter(len(dates) + 3) + '1')
+        # Title        ws.merge_cells('A1:' + get_column_letter(len(dates) + 3) + '1')
         title_cell = ws['A1']
         title_cell.value = "Enhanced Attendance Summary Report"
         title_cell.font = Font(name='Calibri', size=16, bold=True, color='FFFFFF')
@@ -1030,8 +1027,7 @@ class AttendanceProcessor:
 
         off_days = self.config.get('off_days', [4])
 
-        # Justification options - EXACT MATCH
-        justification_options = [
+        # Justification options        justification_options = [
             "Normal", "Late (Approved)", "Late", "Absent", "Missing Punch In",
             "Missing Punch In (Justified)", "Missing Punch Out", "Missing Punch Out (Justified)",
             "Early Departure (Approved)", "Early Departure", "Half Day", "Early Leave (HD)",
@@ -1058,8 +1054,7 @@ class AttendanceProcessor:
         dv.promptTitle = "Attendance Status"
         ws.add_data_validation(dv)
 
-        # Data rows - EXACT MATCH with desktop logic
-        row = 4
+        # Data rows        row = 4
         first_data_row = row
         for crm in crms:
             ws.cell(row, 1, crm)
@@ -1085,8 +1080,7 @@ class AttendanceProcessor:
                 status = matrix[crm].get(date, '')
                 day_of_week = date.weekday()
 
-                # Friday always Weekend - EXACT MATCH
-                if day_of_week in off_days:
+                # Friday always Weekend                if day_of_week in off_days:
                     status = "Weekend"
                 elif not status:
                     status = "Absent"
@@ -1121,7 +1115,7 @@ class AttendanceProcessor:
             ws.column_dimensions[get_column_letter(i)].width = 18
 
     def create_analytics_sheet(self, wb):
-        """Create analytics sheet - EXACT MATCH with desktop version"""
+        """Create analytics sheet -"""
         ws = wb.create_sheet("Individual Analytics", 1)
 
         analytics = {}
@@ -1146,8 +1140,7 @@ class AttendanceProcessor:
                 'punctuality_rate': round(normal / total * 100, 1) if total > 0 else 0
             }
 
-        # Title - EXACT MATCH
-        ws.merge_cells('A1:L1')
+        # Title        ws.merge_cells('A1:L1')
         title_cell = ws['A1']
         title_cell.value = "Individual Employee Analytics"
         title_cell.font = Font(size=16, bold=True, color='FFFFFF')
@@ -1155,8 +1148,7 @@ class AttendanceProcessor:
         title_cell.alignment = Alignment(horizontal='center', vertical='center')
         ws.row_dimensions[1].height = 35
 
-        # Headers - EXACT MATCH
-        headers = ['CRM', 'Name', 'Department', 'Position', 'Total Days', 'Normal Days',
+        # Headers        headers = ['CRM', 'Name', 'Department', 'Position', 'Total Days', 'Normal Days',
                    'Late Days', 'Absent Days', 'Missing Punch', 'Attendance Rate %', 'Punctuality Rate %']
 
         for col, header in enumerate(headers, start=1):
@@ -1190,7 +1182,7 @@ class AttendanceProcessor:
             ws.column_dimensions[get_column_letter(col)].width = 15
 
     def create_alerts_sheet(self, wb):
-        """Create alerts sheet - EXACT MATCH with desktop version"""
+        """Create alerts sheet -"""
         ws = wb.create_sheet("Alerts & Warnings", 2)
 
         # Get thresholds
@@ -1218,8 +1210,7 @@ class AttendanceProcessor:
                 'rate': attendance_rate
             }
 
-        # Title - EXACT MATCH
-        ws.merge_cells('A1:D1')
+        # Title        ws.merge_cells('A1:D1')
         title_cell = ws['A1']
         title_cell.value = "Attendance Alerts & Warnings"
         title_cell.font = Font(size=16, bold=True, color='FFFFFF')
@@ -1235,8 +1226,7 @@ class AttendanceProcessor:
             cell.fill = PatternFill(start_color='DC3545', end_color='DC3545', fill_type='solid')
             cell.alignment = Alignment(horizontal='center', vertical='center')
 
-        # Generate alerts - EXACT MATCH with desktop
-        row = 4
+        # Generate alerts        row = 4
         alert_count = 0
 
         for crm, data in sorted(analytics.items()):
@@ -1295,7 +1285,7 @@ class AttendanceProcessor:
         ws.column_dimensions['D'].width = 40
 
     def create_penalties_sheet(self, wb):
-        """Create penalties sheet - EXACT MATCH with desktop version (25 columns with formulas)"""
+        """Create penalties sheet - (25 columns with formulas)"""
         ws = wb.create_sheet("Penalties", 3)
         currency = self.config.get('penalties', {}).get('currency', 'EGP')
         penalties_config = self.config.get('penalties', {})
@@ -1573,8 +1563,7 @@ class AttendanceProcessor:
             ws.cell(r, 28).fill = PatternFill(start_color='E1D5E7', end_color='E1D5E7', fill_type='solid')
             ws.cell(r, 28).font = Font(bold=True, color='6B3FA0')
 
-        # Policy legend - EXACT MATCH with desktop
-        legend_row = totals_row + 3
+        # Policy legend        legend_row = totals_row + 3
         ws.cell(legend_row, 1, "Deduction Policy Reference:").font = Font(bold=True)
         legend_row += 1
         ws.cell(legend_row, 1, f"Late: {currency} {late_1st} (1st), {currency} {late_2nd} (2nd), {currency} {late_3rd}+ (3rd+) + Warning | Late (Approved): No Deduction")
@@ -1690,8 +1679,9 @@ def main():
     if 'attendance_files' not in st.session_state:
         st.session_state.attendance_files = []
 
+    st.image("Logo.png", width=120)
     st.title("Attendance Dashboard v2.2")
-    st.markdown("*Web-based attendance processing - EXACT MATCH with desktop version*")
+    st.markdown("*Web-based attendance processing*")
 
     with st.sidebar:
         st.header("Settings")
@@ -1895,7 +1885,7 @@ def main():
         st.rerun()
 
     st.divider()
-    st.caption("Attendance Dashboard v2.2 - Web Edition | EXACT MATCH with Desktop Version")
+    st.caption("Attendance Dashboard v2.2 - Web Edition")
 
 
 if __name__ == "__main__":
