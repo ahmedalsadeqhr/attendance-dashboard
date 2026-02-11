@@ -939,8 +939,11 @@ class AttendanceProcessor:
 
     def _apply_status_color(self, cell, status):
         """Apply color coding - EXACT MATCH with desktop version"""
-        # Light Purple - Backdated leaves (BD) - check first before other rules
-        if '(BD)' in status:
+        # Light Green - Refund leaves (Refund) - check first before other rules
+        if '(Refund)' in status:
+            cell.fill = PatternFill(start_color='E2EFDA', end_color='E2EFDA', fill_type='solid')
+        # Light Purple - Backdated leaves (BD)
+        elif '(BD)' in status:
             cell.fill = PatternFill(start_color='E1D5E7', end_color='E1D5E7', fill_type='solid')
         # Green - No deduction statuses
         elif status in ['Normal', 'Present', 'Late (Approved)', 'Annual Leave', 'Casual Leave',
@@ -1037,7 +1040,9 @@ class AttendanceProcessor:
             "Weekend", "Resigned",
             "Annual Leave (BD)", "Casual Leave (BD)", "Sick Leave (BD)", "Unpaid Leave (BD)",
             "Half Day (BD)", "Early Leave (HD) (BD)", "Early Departure (BD)", "Marriage Leave (BD)",
-            "Paternity Leave (BD)", "Maternity Leave (BD)", "Bereavement Leave (BD)"
+            "Paternity Leave (BD)", "Maternity Leave (BD)", "Bereavement Leave (BD)",
+            # Refund variants - reversal of previous penalties
+            "Annual Leave (Refund)", "Sick Leave (Refund)", "Half Day (Refund)"
         ]
 
         justification_list = ",".join(justification_options)
@@ -1063,7 +1068,8 @@ class AttendanceProcessor:
             normal_statuses = ['Normal', 'Present', 'Weekend', 'Worked on Day Off', 'Late (Approved)',
                                'Annual Leave', 'Casual Leave', 'Marriage Leave', 'Paternity Leave',
                                'Maternity Leave', 'Bereavement Leave', 'Military Call Leave',
-                               'Early Departure (Approved)']
+                               'Early Departure (Approved)',
+                               'Annual Leave (Refund)', 'Sick Leave (Refund)', 'Half Day (Refund)']
             normal_count = 0
             for d in dates:
                 if d.weekday() in off_days:
@@ -1299,7 +1305,7 @@ class AttendanceProcessor:
         summary_last_col = summary_ws.max_column
         summary_last_col_letter = get_column_letter(summary_last_col)
 
-        total_cols = 25
+        total_cols = 28
 
         # Title
         ws.merge_cells(f'A1:{get_column_letter(total_cols)}1')
@@ -1317,18 +1323,19 @@ class AttendanceProcessor:
         subtitle.font = Font(size=9, italic=True)
         subtitle.alignment = Alignment(horizontal='center')
 
-        # Headers (25 columns)
+        # Headers (28 columns)
         headers = [
             'CRM', 'Name', 'National ID', 'Vendor', 'PS ID', 'Department', 'Join Date',
             'Late Count', f'Late Penalty ({currency})',
-            'Missing Punches', 'Punch Ded. (days)',
-            'Absences', 'Absence Ded. (days)',
-            'Early Dep.', 'Early Dep. Ded.',
-            'Half Day', 'Half Day Ded.',
-            'Sick Leave', 'Sick Ded.',
-            'Unpaid Leave', 'Unpaid Ded.',
-            f'Total Penalty ({currency})', 'Total Ded. (days)', 'Warnings',
-            'Backdated Leaves'
+            'Missing Punches', 'Punch Ded. (-)',
+            'Absences', 'Absence Ded. (-)',
+            'Early Dep.', 'Early Dep. Ded. (-)',
+            'Half Day', 'Half Day Ded. (-)',
+            'Sick Leave', 'Sick Ded. (-)',
+            'Unpaid Leave', 'Unpaid Ded. (-)',
+            'Refund Count', 'Refund (+days)',
+            f'Total Penalty ({currency})', 'Gross Ded. (days)', 'Net Ded. (days)',
+            'Warnings', 'Backdated Leaves'
         ]
 
         header_row = 4
@@ -1410,8 +1417,8 @@ class AttendanceProcessor:
             else:
                 ws.cell(data_row, 10, data['missing_punch_count'])
 
-            # Column K: Punch Deduction
-            ws.cell(data_row, 11, f"=IF(J{data_row}>{missing_threshold},(J{data_row}-{missing_threshold})*{missing_deduction_rate},0)")
+            # Column K: Punch Deduction (negative)
+            ws.cell(data_row, 11, f"=-IF(J{data_row}>{missing_threshold},(J{data_row}-{missing_threshold})*{missing_deduction_rate},0)")
 
             # Column L: Absences
             if sr:
@@ -1419,8 +1426,8 @@ class AttendanceProcessor:
             else:
                 ws.cell(data_row, 12, data['absence_count'])
 
-            # Column M: Absence Deduction
-            ws.cell(data_row, 13, f"=L{data_row}*{absence_deduction_rate}")
+            # Column M: Absence Deduction (negative)
+            ws.cell(data_row, 13, f"=-L{data_row}*{absence_deduction_rate}")
 
             # Column N: Early Departure Count
             if sr:
@@ -1428,8 +1435,8 @@ class AttendanceProcessor:
             else:
                 ws.cell(data_row, 14, 0)
 
-            # Column O: Early Departure Deduction
-            ws.cell(data_row, 15, f"=N{data_row}*{early_dep_deduction}")
+            # Column O: Early Departure Deduction (negative)
+            ws.cell(data_row, 15, f"=-N{data_row}*{early_dep_deduction}")
 
             # Column P: Half Day Count
             if sr:
@@ -1437,8 +1444,8 @@ class AttendanceProcessor:
             else:
                 ws.cell(data_row, 16, 0)
 
-            # Column Q: Half Day Deduction
-            ws.cell(data_row, 17, f"=P{data_row}*{half_day_deduction}")
+            # Column Q: Half Day Deduction (negative)
+            ws.cell(data_row, 17, f"=-P{data_row}*{half_day_deduction}")
 
             # Column R: Sick Leave Count
             if sr:
@@ -1446,8 +1453,8 @@ class AttendanceProcessor:
             else:
                 ws.cell(data_row, 18, 0)
 
-            # Column S: Sick Leave Deduction
-            ws.cell(data_row, 19, f"=R{data_row}*{sick_leave_deduction}")
+            # Column S: Sick Leave Deduction (negative)
+            ws.cell(data_row, 19, f"=-R{data_row}*{sick_leave_deduction}")
 
             # Column T: Unpaid Leave Count
             if sr:
@@ -1455,28 +1462,43 @@ class AttendanceProcessor:
             else:
                 ws.cell(data_row, 20, 0)
 
-            # Column U: Unpaid Leave Deduction
-            ws.cell(data_row, 21, f"=T{data_row}*{unpaid_leave_deduction}")
+            # Column U: Unpaid Leave Deduction (negative)
+            ws.cell(data_row, 21, f"=-T{data_row}*{unpaid_leave_deduction}")
 
-            # Column V: Total Penalty
-            ws.cell(data_row, 22, f"=I{data_row}")
+            # Column V: Refund Count (all refund types)
+            if sr:
+                ws.cell(data_row, 22, f'=COUNTIF({rng},"Annual Leave (Refund)")+COUNTIF({rng},"Sick Leave (Refund)")+COUNTIF({rng},"Half Day (Refund)")')
+            else:
+                ws.cell(data_row, 22, 0)
 
-            # Column W: Total Deduction
-            ws.cell(data_row, 23, f"=K{data_row}+M{data_row}+O{data_row}+Q{data_row}+S{data_row}+U{data_row}")
+            # Column W: Refund Days (positive - adds days back)
+            if sr:
+                ws.cell(data_row, 23, f'=COUNTIF({rng},"Annual Leave (Refund)")*1+COUNTIF({rng},"Sick Leave (Refund)")*0.75+COUNTIF({rng},"Half Day (Refund)")*0.5')
+            else:
+                ws.cell(data_row, 23, 0)
 
-            # Column X: Warnings
+            # Column X: Total Penalty (only late penalty contributes to EGP)
+            ws.cell(data_row, 24, f"=I{data_row}")
+
+            # Column Y: Gross Deduction (sum of all negative day deductions)
+            ws.cell(data_row, 25, f"=K{data_row}+M{data_row}+O{data_row}+Q{data_row}+S{data_row}+U{data_row}")
+
+            # Column Z: Net Deduction (gross deductions + refund credits)
+            ws.cell(data_row, 26, f"=Y{data_row}+W{data_row}")
+
+            # Column AA: Warnings
             warnings_formula = (
                 f"=IF(H{data_row}>=3,1,0)+"
                 f"IF(J{data_row}>6,1,0)+"
                 f"IF(L{data_row}>0,1,0)"
             )
-            ws.cell(data_row, 24, warnings_formula)
+            ws.cell(data_row, 27, warnings_formula)
 
-            # Column Y: Backdated Leaves
+            # Column AB: Backdated Leaves
             if sr:
-                ws.cell(data_row, 25, f'=COUNTIF({rng},"*(BD)")')
+                ws.cell(data_row, 28, f'=COUNTIF({rng},"*(BD)")')
             else:
-                ws.cell(data_row, 25, 0)
+                ws.cell(data_row, 28, 0)
 
             # Apply borders
             for col in range(1, total_cols + 1):
@@ -1496,17 +1518,19 @@ class AttendanceProcessor:
 
         ws.cell(totals_row, 1, "TOTAL").font = Font(bold=True)
 
-        sum_columns = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]
+        sum_columns = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]
         for col in sum_columns:
             col_letter = get_column_letter(col)
             ws.cell(totals_row, col, f"=SUM({col_letter}{first_data_row}:{col_letter}{last_data_row})")
 
         # Highlight totals
-        ws.cell(totals_row, 22).fill = PatternFill(start_color='DC3545', end_color='DC3545', fill_type='solid')
-        ws.cell(totals_row, 22).font = Font(bold=True, color='FFFFFF', size=12)
-        ws.cell(totals_row, 23).fill = PatternFill(start_color='DC3545', end_color='DC3545', fill_type='solid')
-        ws.cell(totals_row, 23).font = Font(bold=True, color='FFFFFF', size=12)
-        ws.cell(totals_row, 24).font = Font(bold=True)
+        ws.cell(totals_row, 24).fill = PatternFill(start_color='DC3545', end_color='DC3545', fill_type='solid')
+        ws.cell(totals_row, 24).font = Font(bold=True, color='FFFFFF', size=12)
+        ws.cell(totals_row, 25).fill = PatternFill(start_color='DC3545', end_color='DC3545', fill_type='solid')
+        ws.cell(totals_row, 25).font = Font(bold=True, color='FFFFFF', size=12)
+        ws.cell(totals_row, 26).fill = PatternFill(start_color='DC3545', end_color='DC3545', fill_type='solid')
+        ws.cell(totals_row, 26).font = Font(bold=True, color='FFFFFF', size=12)
+        ws.cell(totals_row, 27).font = Font(bold=True)
 
         for col in range(1, total_cols + 1):
             ws.cell(totals_row, col).border = Border(
@@ -1514,8 +1538,8 @@ class AttendanceProcessor:
                 top=Side(style='double'), bottom=Side(style='thin')
             )
 
-        # Column widths
-        widths = [15, 18, 16, 12, 10, 15, 11, 8, 14, 10, 10, 8, 10, 8, 10, 8, 10, 8, 8, 10, 10, 14, 12, 8, 12]
+        # Column widths (28 columns)
+        widths = [15, 18, 16, 12, 10, 15, 11, 8, 14, 10, 10, 8, 10, 8, 10, 8, 10, 8, 8, 10, 10, 10, 12, 14, 12, 12, 8, 12]
         for i, width in enumerate(widths, start=1):
             ws.column_dimensions[get_column_letter(i)].width = width
 
@@ -1528,14 +1552,26 @@ class AttendanceProcessor:
             ws.cell(r, 17).fill = PatternFill(start_color='FCE4D6', end_color='FCE4D6', fill_type='solid')
             ws.cell(r, 19).fill = PatternFill(start_color='BDD7EE', end_color='BDD7EE', fill_type='solid')
             ws.cell(r, 21).fill = PatternFill(start_color='BDD7EE', end_color='BDD7EE', fill_type='solid')
-            ws.cell(r, 22).fill = PatternFill(start_color='F8D7DA', end_color='F8D7DA', fill_type='solid')
-            ws.cell(r, 22).font = Font(bold=True)
-            ws.cell(r, 23).fill = PatternFill(start_color='F8D7DA', end_color='F8D7DA', fill_type='solid')
-            ws.cell(r, 23).font = Font(bold=True)
-            ws.cell(r, 24).fill = PatternFill(start_color='FFF3CD', end_color='FFF3CD', fill_type='solid')
-            ws.cell(r, 24).font = Font(bold=True, color='856404')
-            ws.cell(r, 25).fill = PatternFill(start_color='E1D5E7', end_color='E1D5E7', fill_type='solid')
-            ws.cell(r, 25).font = Font(bold=True, color='6B3FA0')
+            # Refund Count - Light Green
+            ws.cell(r, 22).fill = PatternFill(start_color='E2EFDA', end_color='E2EFDA', fill_type='solid')
+            # Refund Days - Light Green
+            ws.cell(r, 23).fill = PatternFill(start_color='E2EFDA', end_color='E2EFDA', fill_type='solid')
+            ws.cell(r, 23).font = Font(bold=True, color='375623')
+            # Total Penalty
+            ws.cell(r, 24).fill = PatternFill(start_color='F8D7DA', end_color='F8D7DA', fill_type='solid')
+            ws.cell(r, 24).font = Font(bold=True)
+            # Gross Deduction
+            ws.cell(r, 25).fill = PatternFill(start_color='F8D7DA', end_color='F8D7DA', fill_type='solid')
+            ws.cell(r, 25).font = Font(bold=True)
+            # Net Deduction
+            ws.cell(r, 26).fill = PatternFill(start_color='F8D7DA', end_color='F8D7DA', fill_type='solid')
+            ws.cell(r, 26).font = Font(bold=True)
+            # Warnings
+            ws.cell(r, 27).fill = PatternFill(start_color='FFF3CD', end_color='FFF3CD', fill_type='solid')
+            ws.cell(r, 27).font = Font(bold=True, color='856404')
+            # Backdated Leaves
+            ws.cell(r, 28).fill = PatternFill(start_color='E1D5E7', end_color='E1D5E7', fill_type='solid')
+            ws.cell(r, 28).font = Font(bold=True, color='6B3FA0')
 
         # Policy legend - EXACT MATCH with desktop
         legend_row = totals_row + 3
@@ -1548,6 +1584,11 @@ class AttendanceProcessor:
         ws.cell(legend_row, 1, f"Absent: {absence_deduction_rate} days | Early Departure/Half Day: {early_dep_deduction} day | Sick Leave: {sick_leave_deduction} day | Unpaid Leave: {unpaid_leave_deduction} day")
         legend_row += 1
         ws.cell(legend_row, 1, "No Deduction: Normal, Late (Approved), Early Departure (Approved), Annual/Casual/Marriage/Paternity/Maternity/Bereavement/Military Call Leave")
+        legend_row += 1
+        ws.cell(legend_row, 1, "REFUND LEAVES: Annual Leave (Refund) +1 day, Sick Leave (Refund) +0.75 days, Half Day (Refund) +0.5 days - reversal of previous penalties")
+        ws.cell(legend_row, 1).font = Font(bold=True, color='375623')
+        legend_row += 1
+        ws.cell(legend_row, 1, "SIGN CONVENTION: Deductions shown as negative (-), Refunds shown as positive (+). Net Ded. = Gross Ded. + Refunds")
         legend_row += 1
         ws.cell(legend_row, 1, "BACKDATED LEAVES (BD): Leaves marked with (BD) suffix are transferred from previous months - shown in purple, HR to review manually")
         ws.cell(legend_row, 1).font = Font(bold=True, color='6B3FA0')
