@@ -24,7 +24,8 @@ def read_excel_file(file_obj, filename):
         return pd.read_excel(file_obj)
 
 
-# Default configurationDEFAULT_CONFIG = {
+# Default configuration
+DEFAULT_CONFIG = {
     'work_start_time': '12:00 PM',
     'work_end_time': '9:00 PM',
     'late_threshold': '12:00 PM',
@@ -998,7 +999,8 @@ class AttendanceProcessor:
         for record in self.processed_data:
             matrix[record['crm']][record['date']] = record['status']
 
-        # Title        ws.merge_cells('A1:' + get_column_letter(len(dates) + 3) + '1')
+        # Title
+        ws.merge_cells('A1:' + get_column_letter(len(dates) + 3) + '1')
         title_cell = ws['A1']
         title_cell.value = "Enhanced Attendance Summary Report"
         title_cell.font = Font(name='Calibri', size=16, bold=True, color='FFFFFF')
@@ -1027,7 +1029,8 @@ class AttendanceProcessor:
 
         off_days = self.config.get('off_days', [4])
 
-        # Justification options        justification_options = [
+        # Justification options
+        justification_options = [
             "Normal", "Late (Approved)", "Late", "Absent", "Missing Punch In",
             "Missing Punch In (Justified)", "Missing Punch Out", "Missing Punch Out (Justified)",
             "Early Departure (Approved)", "Early Departure", "Half Day", "Early Leave (HD)",
@@ -1054,7 +1057,8 @@ class AttendanceProcessor:
         dv.promptTitle = "Attendance Status"
         ws.add_data_validation(dv)
 
-        # Data rows        row = 4
+        # Data rows
+        row = 4
         first_data_row = row
         for crm in crms:
             ws.cell(row, 1, crm)
@@ -1080,7 +1084,8 @@ class AttendanceProcessor:
                 status = matrix[crm].get(date, '')
                 day_of_week = date.weekday()
 
-                # Friday always Weekend                if day_of_week in off_days:
+                # Friday always Weekend
+                if day_of_week in off_days:
                     status = "Weekend"
                 elif not status:
                     status = "Absent"
@@ -1140,7 +1145,8 @@ class AttendanceProcessor:
                 'punctuality_rate': round(normal / total * 100, 1) if total > 0 else 0
             }
 
-        # Title        ws.merge_cells('A1:L1')
+        # Title
+        ws.merge_cells('A1:L1')
         title_cell = ws['A1']
         title_cell.value = "Individual Employee Analytics"
         title_cell.font = Font(size=16, bold=True, color='FFFFFF')
@@ -1148,7 +1154,8 @@ class AttendanceProcessor:
         title_cell.alignment = Alignment(horizontal='center', vertical='center')
         ws.row_dimensions[1].height = 35
 
-        # Headers        headers = ['CRM', 'Name', 'Department', 'Position', 'Total Days', 'Normal Days',
+        # Headers
+        headers = ['CRM', 'Name', 'Department', 'Position', 'Total Days', 'Normal Days',
                    'Late Days', 'Absent Days', 'Missing Punch', 'Attendance Rate %', 'Punctuality Rate %']
 
         for col, header in enumerate(headers, start=1):
@@ -1210,7 +1217,8 @@ class AttendanceProcessor:
                 'rate': attendance_rate
             }
 
-        # Title        ws.merge_cells('A1:D1')
+        # Title
+        ws.merge_cells('A1:D1')
         title_cell = ws['A1']
         title_cell.value = "Attendance Alerts & Warnings"
         title_cell.font = Font(size=16, bold=True, color='FFFFFF')
@@ -1226,7 +1234,8 @@ class AttendanceProcessor:
             cell.fill = PatternFill(start_color='DC3545', end_color='DC3545', fill_type='solid')
             cell.alignment = Alignment(horizontal='center', vertical='center')
 
-        # Generate alerts        row = 4
+        # Generate alerts
+        row = 4
         alert_count = 0
 
         for crm, data in sorted(analytics.items()):
@@ -1563,7 +1572,8 @@ class AttendanceProcessor:
             ws.cell(r, 28).fill = PatternFill(start_color='E1D5E7', end_color='E1D5E7', fill_type='solid')
             ws.cell(r, 28).font = Font(bold=True, color='6B3FA0')
 
-        # Policy legend        legend_row = totals_row + 3
+        # Policy legend
+        legend_row = totals_row + 3
         ws.cell(legend_row, 1, "Deduction Policy Reference:").font = Font(bold=True)
         legend_row += 1
         ws.cell(legend_row, 1, f"Late: {currency} {late_1st} (1st), {currency} {late_2nd} (2nd), {currency} {late_3rd}+ (3rd+) + Warning | Late (Approved): No Deduction")
