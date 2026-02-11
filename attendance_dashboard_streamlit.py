@@ -970,6 +970,10 @@ class AttendanceProcessor:
         # Light Gray - Resigned
         elif status == 'Resigned':
             cell.fill = PatternFill(start_color='C0C0C0', end_color='C0C0C0', fill_type='solid')
+        # Light Silver - Not Yet Hired
+        elif status == 'Not Yet Hired':
+            cell.fill = PatternFill(start_color='D6DCE4', end_color='D6DCE4', fill_type='solid')
+            cell.font = Font(color='808080', italic=True)
         # Light green - Worked on Day Off
         elif status == 'Worked on Day Off':
             cell.fill = PatternFill(start_color='E2EFDA', end_color='E2EFDA', fill_type='solid')
@@ -1057,6 +1061,17 @@ class AttendanceProcessor:
         dv.promptTitle = "Attendance Status"
         ws.add_data_validation(dv)
 
+        # Build CRM → join_date lookup for "Not Yet Hired" detection
+        crm_join_dates = {}
+        for ac_no, emp_info in self.employee_mapping.items():
+            crm_val = emp_info.get('crm', '')
+            jd = emp_info.get('join_date', '')
+            if crm_val and jd:
+                try:
+                    crm_join_dates[crm_val] = datetime.strptime(jd, '%Y-%m-%d').date() if isinstance(jd, str) else jd.date() if hasattr(jd, 'date') else jd
+                except (ValueError, TypeError):
+                    pass
+
         # Data rows
         row = 4
         first_data_row = row
@@ -1068,10 +1083,16 @@ class AttendanceProcessor:
                                'Annual Leave', 'Casual Leave', 'Marriage Leave', 'Paternity Leave',
                                'Maternity Leave', 'Bereavement Leave', 'Military Call Leave',
                                'Early Departure (Approved)',
-                               'Annual Leave (Refund)', 'Sick Leave (Refund)', 'Half Day (Refund)']
+                               'Annual Leave (Refund)', 'Sick Leave (Refund)', 'Half Day (Refund)',
+                               'Not Yet Hired']
             normal_count = 0
             for d in dates:
-                if d.weekday() in off_days:
+                # Pre-hire dates count as normal (no penalty)
+                join_dt = crm_join_dates.get(crm)
+                d_date = d.date() if hasattr(d, 'date') else d
+                if join_dt and d_date < join_dt:
+                    normal_count += 1
+                elif d.weekday() in off_days:
                     normal_count += 1
                 else:
                     status = matrix[crm].get(d, '')
@@ -1084,8 +1105,13 @@ class AttendanceProcessor:
                 status = matrix[crm].get(date, '')
                 day_of_week = date.weekday()
 
+                # Check if date is before employee's join date
+                join_dt = crm_join_dates.get(crm)
+                date_val = date.date() if hasattr(date, 'date') else date
+                if join_dt and date_val < join_dt:
+                    status = "Not Yet Hired"
                 # Friday always Weekend
-                if day_of_week in off_days:
+                elif day_of_week in off_days:
                     status = "Weekend"
                 elif not status:
                     status = "Absent"
