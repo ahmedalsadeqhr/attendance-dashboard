@@ -544,7 +544,7 @@ class AttendanceProcessor:
                     try:
                         exit_date = datetime.strptime(exit_date_str, '%Y-%m-%d').date()
                         if date.date() > exit_date:
-                            return "Resigned", "Resigned", "Resigned"
+                            return "Departed", "Departed", "Departed"
                     except Exception:
                         pass
                 break
@@ -757,7 +757,7 @@ class AttendanceProcessor:
                 existing_status = existing_record['status']
 
                 # Track conflict BEFORE updating
-                if existing_status not in ['Weekend', 'Resigned', 'Absent']:
+                if existing_status not in ['Weekend', 'Departed', 'Absent']:
                     self.conflict_records.append({
                         'crm': crm,
                         'name': existing_record.get('name', ''),
@@ -967,9 +967,10 @@ class AttendanceProcessor:
         # Gray - Weekend
         elif status == 'Weekend':
             cell.fill = PatternFill(start_color='D9D9D9', end_color='D9D9D9', fill_type='solid')
-        # Light Gray - Resigned
-        elif status == 'Resigned':
-            cell.fill = PatternFill(start_color='C0C0C0', end_color='C0C0C0', fill_type='solid')
+        # Light Silver - Departed (post exit date)
+        elif status == 'Departed':
+            cell.fill = PatternFill(start_color='D6DCE4', end_color='D6DCE4', fill_type='solid')
+            cell.font = Font(color='808080', italic=True)
         # Light Silver - Not Yet Hired
         elif status == 'Not Yet Hired':
             cell.fill = PatternFill(start_color='D6DCE4', end_color='D6DCE4', fill_type='solid')
@@ -1040,7 +1041,7 @@ class AttendanceProcessor:
             "Early Departure (Approved)", "Early Departure", "Half Day", "Early Leave (HD)",
             "Sick Leave", "Annual Leave", "Casual Leave", "Marriage Leave", "Paternity Leave",
             "Maternity Leave", "Bereavement Leave", "Military Call Leave", "Unpaid Leave",
-            "Weekend", "Resigned",
+            "Weekend", "Departed",
             "Annual Leave (BD)", "Casual Leave (BD)", "Sick Leave (BD)", "Unpaid Leave (BD)",
             "Half Day (BD)", "Early Leave (HD) (BD)", "Early Departure (BD)", "Marriage Leave (BD)",
             "Paternity Leave (BD)", "Maternity Leave (BD)", "Bereavement Leave (BD)",
@@ -1072,6 +1073,17 @@ class AttendanceProcessor:
                 except (ValueError, TypeError):
                     pass
 
+        # Build CRM → exit_date lookup for "Departed" detection
+        crm_exit_dates = {}
+        for ac_no, emp_info in self.employee_mapping.items():
+            crm_val = emp_info.get('crm', '')
+            ed = emp_info.get('exit_date', '')
+            if crm_val and ed:
+                try:
+                    crm_exit_dates[crm_val] = datetime.strptime(ed, '%Y-%m-%d').date() if isinstance(ed, str) else ed.date() if hasattr(ed, 'date') else ed
+                except (ValueError, TypeError):
+                    pass
+
         # Data rows
         row = 4
         first_data_row = row
@@ -1084,15 +1096,19 @@ class AttendanceProcessor:
                                'Maternity Leave', 'Bereavement Leave', 'Military Call Leave',
                                'Early Departure (Approved)',
                                'Annual Leave (Refund)', 'Sick Leave (Refund)', 'Half Day (Refund)',
-                               'Not Yet Hired']
+                               'Not Yet Hired', 'Departed']
             normal_count = 0
             for d in dates:
                 # Pre-hire dates count as normal (no penalty)
                 join_dt = crm_join_dates.get(crm)
+                exit_dt = crm_exit_dates.get(crm)
                 d_date = d.date() if hasattr(d, 'date') else d
                 if join_dt and d_date < join_dt:
                     normal_count += 1
                 elif d.weekday() in off_days:
+                    normal_count += 1
+                # Post-exit dates count as normal (no penalty) — but weekends stay as Weekend
+                elif exit_dt and d_date > exit_dt:
                     normal_count += 1
                 else:
                     status = matrix[crm].get(d, '')
@@ -1107,12 +1123,16 @@ class AttendanceProcessor:
 
                 # Check if date is before employee's join date
                 join_dt = crm_join_dates.get(crm)
+                exit_dt = crm_exit_dates.get(crm)
                 date_val = date.date() if hasattr(date, 'date') else date
                 if join_dt and date_val < join_dt:
                     status = "Not Yet Hired"
                 # Friday always Weekend
                 elif day_of_week in off_days:
                     status = "Weekend"
+                # Post-exit dates show as "Departed"
+                elif exit_dt and date_val > exit_dt:
+                    status = "Departed"
                 elif not status:
                     status = "Absent"
 
