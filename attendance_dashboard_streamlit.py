@@ -1747,13 +1747,15 @@ def main():
         work_start = st.text_input("Start Time", value=st.session_state.processor.config.get('work_start_time', '12:00 PM'))
         work_end = st.text_input("End Time", value=st.session_state.processor.config.get('work_end_time', '9:00 PM'))
 
-        late_threshold = st.time_input(
-            "Late Threshold",
-            value=datetime.strptime(
-                st.session_state.processor.config.get('late_threshold', '12:00 PM'),
-                "%I:%M %p"
-            ).time()
-        )
+        # Generate 5-minute interval time options (12:00 AM to 11:55 PM)
+        time_options = []
+        for h in range(24):
+            for m in range(0, 60, 5):
+                t = datetime(2000, 1, 1, h, m).strftime("%I:%M %p")
+                time_options.append(t)
+        current_late = st.session_state.processor.config.get('late_threshold', '12:00 PM')
+        late_index = time_options.index(current_late) if current_late in time_options else 0
+        late_threshold_str = st.selectbox("Late Threshold", options=time_options, index=late_index)
 
         off_days = st.multiselect(
             "Off Days",
@@ -1767,7 +1769,7 @@ def main():
 
         st.session_state.processor.config['work_start_time'] = work_start
         st.session_state.processor.config['work_end_time'] = work_end
-        st.session_state.processor.config['late_threshold'] = late_threshold.strftime("%I:%M %p")
+        st.session_state.processor.config['late_threshold'] = late_threshold_str
         st.session_state.processor.config['off_days'] = off_day_nums
 
         # Alert Thresholds
