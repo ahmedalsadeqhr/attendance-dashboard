@@ -2696,7 +2696,7 @@ class AttendanceDashboard:
 
             # Column T (20): Unpaid Leave Count (includes BD variant and variations)
             if sr:
-                ws.cell(data_row, 20, f'=COUNTIF({rng},"Unpaid Leave")+COUNTIF({rng},"Unpaid Leave (BD)")+COUNTIF({rng},"Unpaid leave")')
+                ws.cell(data_row, 20, f'=COUNTIF({rng},"Unpaid Leave")+COUNTIF({rng},"Unpaid Leave (BD)")')
             else:
                 ws.cell(data_row, 20, 0)
 
