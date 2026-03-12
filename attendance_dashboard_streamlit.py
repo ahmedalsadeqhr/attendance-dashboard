@@ -1409,6 +1409,11 @@ class AttendanceProcessor:
         sick_leave_deduction = 0.25
         unpaid_leave_deduction = 1.0
 
+        # Determine attendance period end date (for tenure check)
+        period_end = max((r['date'] for r in self.processed_data), default=datetime.now())
+        if hasattr(period_end, 'date'):
+            period_end = period_end.date()
+
         # Build CRM to summary row mapping
         crm_to_summary_row = {}
         for r in range(4, summary_ws.max_row + 1):
@@ -1490,7 +1495,20 @@ class AttendanceProcessor:
                 ws.cell(data_row, 16, 0)
 
             # Column Q: Half Day Deduction (negative)
-            ws.cell(data_row, 17, f"=-P{data_row}*{half_day_deduction}")
+            # Employees hired > 6 months before period end are exempt from half day deduction
+            join_date_str = data.get('join_date', '')
+            half_day_exempt = False
+            if join_date_str:
+                try:
+                    join_dt = datetime.strptime(join_date_str, '%Y-%m-%d').date() if isinstance(join_date_str, str) else join_date_str
+                    tenure_days = (period_end - join_dt).days
+                    half_day_exempt = tenure_days > 183  # ~6 months
+                except (ValueError, TypeError):
+                    pass
+            if half_day_exempt:
+                ws.cell(data_row, 17, 0)
+            else:
+                ws.cell(data_row, 17, f"=-P{data_row}*{half_day_deduction}")
 
             # Column R: Sick Leave Count
             if sr:
@@ -1626,7 +1644,7 @@ class AttendanceProcessor:
         legend_row += 1
         ws.cell(legend_row, 1, f"Missing Punch (all types): {missing_deduction_rate} day after {missing_threshold} occurrences, warning after 6")
         legend_row += 1
-        ws.cell(legend_row, 1, f"Absent: {absence_deduction_rate} days | Early Departure/Half Day: {early_dep_deduction} day | Sick Leave: {sick_leave_deduction} day | Unpaid Leave: {unpaid_leave_deduction} day")
+        ws.cell(legend_row, 1, f"Absent: {absence_deduction_rate} days | Early Departure: {early_dep_deduction} day | Half Day: {half_day_deduction} day (exempt if hired >6 months) | Sick Leave: {sick_leave_deduction} day | Unpaid Leave: {unpaid_leave_deduction} day")
         legend_row += 1
         ws.cell(legend_row, 1, "No Deduction: Normal, Late (Approved), Early Departure (Approved), Annual/Casual/Marriage/Paternity/Maternity/Bereavement/Military Call Leave")
         legend_row += 1
