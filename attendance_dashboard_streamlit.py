@@ -1,5 +1,5 @@
 """
-Attendance Dashboard Streamlit Web Application v2.2
+Attendance Dashboard Streamlit Web Application v2.3
 Web-based attendance processing with Streamlit interface
 EXACT REPLICA of desktop version report generation
 """
@@ -57,11 +57,18 @@ class AttendanceProcessor:
     def __init__(self, config=None):
         self.config = config or DEFAULT_CONFIG.copy()
         self.employee_mapping = {}
+        self.crm_to_info = {}
         self.leave_records = []
         self.processed_data = []
         self.conflict_records = []
         self.penalties_data = {}
         self.logs = []
+
+    def _safe_cell(self, value):
+        """Prevent Excel formula injection by prefixing dangerous leading characters."""
+        if isinstance(value, str) and value and value[0] in ('=', '+', '-', '@'):
+            return "'" + value
+        return value
 
     def log_message(self, message, level='info'):
         """Add log message"""
@@ -296,6 +303,11 @@ class AttendanceProcessor:
                         'exit_date': exit_date_val
                     }
 
+            self.crm_to_info = {
+                info['crm']: info
+                for info in self.employee_mapping.values()
+                if info['crm']
+            }
             self.log_message(f"Loaded {len(self.employee_mapping)} employee records", 'success')
             return True
 
@@ -397,8 +409,8 @@ class AttendanceProcessor:
                             if month_str in month_map:
                                 month = month_map[month_str]
                                 leave_date = datetime(current_year, month, day)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            self.log_message(f"Could not parse date column '{col_str}': {e}", 'warning')
 
             if leave_date:
                 date_columns.append((col, leave_date))
@@ -427,8 +439,8 @@ class AttendanceProcessor:
                                 'date': leave_date,
                                 'leave_type': leave_str
                             })
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.log_message(f"Skipped leave cell for CRM '{crm}' on {leave_date}: {e}", 'warning')
 
     def parse_leave_vertical(self, df):
         """Parse leave data in vertical format -"""
@@ -454,8 +466,50 @@ class AttendanceProcessor:
                     'date': leave_date,
                     'leave_type': leave_type
                 })
-            except Exception:
+            except Exception as e:
+                self.log_message(f"Skipped leave row {idx} in vertical format: {e}", 'warning')
                 continue
+
+    def get_preflight_summary(self, attendance_files, selected_depts=None, selected_crms=None):
+        """Return a dict of pre-flight stats without modifying state."""
+        filtered_mapping = self.get_filtered_employee_mapping(selected_depts, selected_crms)
+        master_ac_nos = set(filtered_mapping.keys())
+        master_crms = set(info['crm'] for info in filtered_mapping.values() if info['crm'])
+
+        unmatched_ac_nos = set()
+        total_att_rows = 0
+
+        for file_obj, filename in attendance_files:
+            try:
+                file_obj.seek(0)
+                df = read_excel_file(file_obj, filename)
+                ac_col = self.find_column(df, ['ac', 'no'], ['AC-No.', 'Ac-No.', 'AC No'])
+                if ac_col:
+                    for val in df[ac_col]:
+                        ac_no = self.normalize_id(val)
+                        if ac_no and ac_no != 'nan':
+                            total_att_rows += 1
+                            if ac_no not in master_ac_nos:
+                                unmatched_ac_nos.add(ac_no)
+            except Exception:
+                pass
+            finally:
+                try:
+                    file_obj.seek(0)
+                except Exception:
+                    pass
+
+        leave_crms_not_in_master = set(
+            r['crm'] for r in self.leave_records if r['crm'] not in master_crms
+        )
+
+        return {
+            'master_employees': len(filtered_mapping),
+            'attendance_rows': total_att_rows,
+            'unmatched_ac_nos': len(unmatched_ac_nos),
+            'leave_records': len(self.leave_records),
+            'leave_crms_not_in_master': len(leave_crms_not_in_master),
+        }
 
     def get_filtered_employee_mapping(self, selected_depts=None, selected_crms=None):
         """Return employee mapping filtered by selected departments and CRMs"""
@@ -511,8 +565,8 @@ class AttendanceProcessor:
                 now = datetime.now()
                 return datetime(now.year, now.month, day)
 
-        except Exception:
-            pass
+        except Exception as e:
+            self.log_message(f"Could not parse date from filename '{filename}': {e}", 'warning')
 
         return datetime.now()
 
@@ -537,17 +591,16 @@ class AttendanceProcessor:
         day_of_week = date.weekday()
 
         # Check if employee has resigned (before all other checks)
-        for ac_no, info in self.employee_mapping.items():
-            if info.get('crm') == crm:
-                exit_date_str = info.get('exit_date', '')
-                if exit_date_str:
-                    try:
-                        exit_date = datetime.strptime(exit_date_str, '%Y-%m-%d').date()
-                        if date.date() > exit_date:
-                            return "Departed", "Departed", "Departed"
-                    except Exception:
-                        pass
-                break
+        emp_info = self.crm_to_info.get(crm)
+        if emp_info:
+            exit_date_str = emp_info.get('exit_date', '')
+            if exit_date_str:
+                try:
+                    exit_date = datetime.strptime(exit_date_str, '%Y-%m-%d').date()
+                    if date.date() > exit_date:
+                        return "Departed", "Departed", "Departed"
+                except Exception as e:
+                    self.log_message(f"Could not parse exit date '{exit_date_str}' for CRM '{crm}': {e}", 'warning')
 
         # Check if it's an OFF day FIRST (before leaves - ignore leaves on OFF days)
         off_days = self.config.get('off_days', [4])
@@ -580,7 +633,8 @@ class AttendanceProcessor:
                 late_threshold_str = self.config.get('late_threshold', '12:00 PM')
                 late_threshold = datetime.strptime(late_threshold_str, "%I:%M %p").time()
                 in_status = "Late" if clock_in_time > late_threshold else "On Time"
-            except Exception:
+            except Exception as e:
+                self.log_message(f"Could not parse clock-in time for CRM '{crm}': {e}", 'warning')
                 in_status = "..."
 
             return "Missing Punch Out", in_status, "No Clock Out"
@@ -600,7 +654,8 @@ class AttendanceProcessor:
                 return "Late", "Late", "On Time"
             else:
                 return "Normal", "On Time", "On Time"
-        except Exception:
+        except Exception as e:
+            self.log_message(f"Could not determine late status for CRM '{crm}': {e}", 'warning')
             return "Normal", "On Time", "On Time"
 
     def process_attendance_files(self, files, selected_depts=None, selected_crms=None):
@@ -635,7 +690,8 @@ class AttendanceProcessor:
                             record_date = pd.to_datetime(row[date_col])
                             if hasattr(record_date, 'to_pydatetime'):
                                 record_date = record_date.to_pydatetime()
-                        except Exception:
+                        except Exception as e:
+                            self.log_message(f"Could not parse date in row {idx} of '{filename}': {e}", 'warning')
                             record_date = file_date
 
                     clock_in = self.get_first_clock_in(row)
@@ -811,17 +867,11 @@ class AttendanceProcessor:
             status = record['status']
 
             if crm not in employee_stats:
-                national_id = ''
-                vendor = ''
-                ps_id = ''
-                join_date = ''
-                for ac_no, emp_info in self.employee_mapping.items():
-                    if emp_info.get('crm') == crm:
-                        national_id = emp_info.get('national_id', '')
-                        vendor = emp_info.get('vendor', '')
-                        ps_id = emp_info.get('ps_id', '')
-                        join_date = emp_info.get('join_date', '')
-                        break
+                emp_info = self.crm_to_info.get(crm, {})
+                national_id = emp_info.get('national_id', '')
+                vendor = emp_info.get('vendor', '')
+                ps_id = emp_info.get('ps_id', '')
+                join_date = emp_info.get('join_date', '')
 
                 employee_stats[crm] = {
                     'name': record.get('name', ''),
@@ -847,7 +897,7 @@ class AttendanceProcessor:
             elif 'Missing Punch' in status:
                 employee_stats[crm]['missing_punch_count'] += 1
                 employee_stats[crm]['working_days'] += 1
-            elif status == 'Absent':
+            elif status in ['Absent', 'No Show']:
                 employee_stats[crm]['absence_count'] += 1
             elif status in ['Normal', 'Present']:
                 employee_stats[crm]['working_days'] += 1
@@ -953,8 +1003,8 @@ class AttendanceProcessor:
         # Yellow - Late with deduction
         elif status == 'Late':
             cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')
-        # Red - Absent
-        elif status == 'Absent':
+        # Red - Absent / No Show
+        elif status in ['Absent', 'No Show']:
             cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')
         # Pink - Missing Punch types
         elif 'Missing Punch' in status:
@@ -1037,7 +1087,7 @@ class AttendanceProcessor:
 
         # Justification options
         justification_options = [
-            "Normal", "Late (Approved)", "Late", "Absent", "Missing Punch In",
+            "Normal", "Late (Approved)", "Late", "Absent", "No Show", "Missing Punch In",
             "Missing Punch In (Justified)", "Missing Punch Out", "Missing Punch Out (Justified)",
             "Early Departure (Approved)", "Early Departure", "Half Day", "Early Leave (HD)",
             "Sick Leave", "Annual Leave", "Casual Leave", "Marriage Leave", "Paternity Leave",
@@ -1176,7 +1226,7 @@ class AttendanceProcessor:
             total = len(records)
             normal = sum(1 for r in records if r['status'] == 'Normal')
             late = sum(1 for r in records if r['status'] == 'Late')
-            absent = sum(1 for r in records if r['status'] == 'Absent')
+            absent = sum(1 for r in records if r['status'] in ['Absent', 'No Show'])
             missing = sum(1 for r in records if 'Missing Punch' in r['status'])
 
             analytics[crm] = {
@@ -1214,10 +1264,10 @@ class AttendanceProcessor:
         # Data
         row = 4
         for crm, data in sorted(analytics.items()):
-            ws.cell(row, 1, crm)
-            ws.cell(row, 2, data['name'])
-            ws.cell(row, 3, data['dept'])
-            ws.cell(row, 4, data['position'])
+            ws.cell(row, 1, self._safe_cell(crm))
+            ws.cell(row, 2, self._safe_cell(data['name']))
+            ws.cell(row, 3, self._safe_cell(data['dept']))
+            ws.cell(row, 4, self._safe_cell(data['position']))
             ws.cell(row, 5, data['total'])
             ws.cell(row, 6, data['normal'])
             ws.cell(row, 7, data['late'])
@@ -1252,7 +1302,7 @@ class AttendanceProcessor:
             records = [r for r in self.processed_data if r['crm'] == crm]
             total = len(records)
             late = sum(1 for r in records if r['status'] == 'Late')
-            absent = sum(1 for r in records if r['status'] == 'Absent')
+            absent = sum(1 for r in records if r['status'] in ['Absent', 'No Show'])
             missing = sum(1 for r in records if 'Missing Punch' in r['status'])
             attendance_rate = (total - absent) / total * 100 if total > 0 else 0
 
@@ -1287,8 +1337,8 @@ class AttendanceProcessor:
 
         for crm, data in sorted(analytics.items()):
             if data['absent'] >= high_absences:
-                ws.cell(row, 1, crm)
-                ws.cell(row, 2, data['name'])
+                ws.cell(row, 1, self._safe_cell(crm))
+                ws.cell(row, 2, self._safe_cell(data['name']))
                 ws.cell(row, 3, "High Absences")
                 ws.cell(row, 4, f"{data['absent']} absences in period")
                 for col in range(1, 5):
@@ -1297,8 +1347,8 @@ class AttendanceProcessor:
                 alert_count += 1
 
             if data['late'] >= frequent_late:
-                ws.cell(row, 1, crm)
-                ws.cell(row, 2, data['name'])
+                ws.cell(row, 1, self._safe_cell(crm))
+                ws.cell(row, 2, self._safe_cell(data['name']))
                 ws.cell(row, 3, "Frequent Late Arrivals")
                 ws.cell(row, 4, f"{data['late']} late arrivals in period")
                 for col in range(1, 5):
@@ -1307,8 +1357,8 @@ class AttendanceProcessor:
                 alert_count += 1
 
             if data['missing'] >= missing_punches:
-                ws.cell(row, 1, crm)
-                ws.cell(row, 2, data['name'])
+                ws.cell(row, 1, self._safe_cell(crm))
+                ws.cell(row, 2, self._safe_cell(data['name']))
                 ws.cell(row, 3, "Missing Punches")
                 ws.cell(row, 4, f"{data['missing']} missing punches (possible device issue)")
                 for col in range(1, 5):
@@ -1317,8 +1367,8 @@ class AttendanceProcessor:
                 alert_count += 1
 
             if data['rate'] < low_rate:
-                ws.cell(row, 1, crm)
-                ws.cell(row, 2, data['name'])
+                ws.cell(row, 1, self._safe_cell(crm))
+                ws.cell(row, 2, self._safe_cell(data['name']))
                 ws.cell(row, 3, "Low Attendance Rate")
                 ws.cell(row, 4, f"Attendance rate: {data['rate']:.1f}%")
                 for col in range(1, 5):
@@ -1428,10 +1478,10 @@ class AttendanceProcessor:
             rng = f"'Summary Report'!$D${sr}:${summary_last_col_letter}${sr}" if sr else None
 
             # Column A: CRM
-            ws.cell(data_row, 1, crm)
+            ws.cell(data_row, 1, self._safe_cell(crm))
 
             # Columns B-G: Static employee info
-            ws.cell(data_row, 2, data['name'])
+            ws.cell(data_row, 2, self._safe_cell(data['name']))
             ws.cell(data_row, 3, data.get('national_id', ''))
             ws.cell(data_row, 4, data.get('vendor', ''))
             ws.cell(data_row, 5, data.get('ps_id', ''))
@@ -1472,7 +1522,7 @@ class AttendanceProcessor:
 
             # Column L: Absences
             if sr:
-                ws.cell(data_row, 12, f'=COUNTIF({rng},"Absent")')
+                ws.cell(data_row, 12, f'=COUNTIF({rng},"Absent")+COUNTIF({rng},"No Show")')
             else:
                 ws.cell(data_row, 12, data['absence_count'])
 
@@ -1836,8 +1886,8 @@ class AttendanceProcessor:
                 date_val = conflict['date']
                 date_str = date_val.strftime('%d-%b-%Y') if hasattr(date_val, 'strftime') else str(date_val)
 
-                ws.cell(data_row, 1, conflict['crm'])
-                ws.cell(data_row, 2, conflict['name'])
+                ws.cell(data_row, 1, self._safe_cell(conflict['crm']))
+                ws.cell(data_row, 2, self._safe_cell(conflict['name']))
                 ws.cell(data_row, 3, date_str)
                 ws.cell(data_row, 4, conflict['attendance_status'])
                 ws.cell(data_row, 5, conflict['leave_type'])
@@ -1888,7 +1938,7 @@ def main():
         st.session_state.attendance_files = []
 
     st.image("Logo.png", width=120)
-    st.title("Attendance Dashboard v2.2")
+    st.title("Attendance Dashboard v2.3")
     st.markdown("*Web-based attendance processing*")
 
     with st.sidebar:
@@ -2019,6 +2069,29 @@ def main():
 
     ready = st.session_state.master_loaded and st.session_state.attendance_loaded
 
+    if ready:
+        selected_depts = getattr(st.session_state, 'selected_depts', None)
+        selected_crms = getattr(st.session_state, 'selected_crms', None)
+        with st.spinner("Running pre-flight checks..."):
+            summary = st.session_state.processor.get_preflight_summary(
+                st.session_state.attendance_files, selected_depts, selected_crms
+            )
+        st.subheader("Pre-flight Summary")
+        pf1, pf2, pf3, pf4 = st.columns(4)
+        pf1.metric("Master Employees", summary['master_employees'])
+        pf2.metric("Attendance Rows", summary['attendance_rows'])
+        pf3.metric("Unmatched IDs", summary['unmatched_ac_nos'],
+                   delta=None if summary['unmatched_ac_nos'] == 0 else f"{summary['unmatched_ac_nos']} won't appear in report",
+                   delta_color="inverse")
+        pf4.metric("Leave Records", summary['leave_records'])
+        if summary['unmatched_ac_nos'] > 0:
+            st.warning(f"⚠ {summary['unmatched_ac_nos']} AC numbers in attendance files have no match in master data and will be excluded from the report.")
+        if summary['leave_crms_not_in_master'] > 0:
+            st.warning(f"⚠ {summary['leave_crms_not_in_master']} CRMs in the leave sheet are not in master data and will be skipped.")
+        if summary['master_employees'] == 0:
+            st.error("No employees match the current filters. Adjust filters before generating.")
+        st.divider()
+
     if st.button("GENERATE REPORT", type="primary", disabled=not ready, use_container_width=True):
         with st.spinner("Processing attendance data..."):
             progress_bar = st.progress(0)
@@ -2026,13 +2099,6 @@ def main():
 
             selected_depts = getattr(st.session_state, 'selected_depts', None)
             selected_crms = getattr(st.session_state, 'selected_crms', None)
-
-            # Validate filter selection
-            if selected_depts is not None or selected_crms is not None:
-                filtered = st.session_state.processor.get_filtered_employee_mapping(selected_depts, selected_crms)
-                if not filtered:
-                    st.warning("No employees match the current filter selection. Please adjust your Department/CRM filters.")
-                    st.stop()
 
             status_text.text("Processing attendance files...")
             progress_bar.progress(10)
@@ -2095,7 +2161,7 @@ def main():
         st.rerun()
 
     st.divider()
-    st.caption("Attendance Dashboard v2.2 - Web Edition")
+    st.caption("Attendance Dashboard v2.3 - Web Edition")
 
 
 if __name__ == "__main__":
