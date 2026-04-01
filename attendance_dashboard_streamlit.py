@@ -13,6 +13,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from datetime import datetime, timedelta
 import io
 import re
+import traceback
 
 
 def read_excel_file(file_obj, filename):
@@ -321,8 +322,12 @@ class AttendanceProcessor:
             self.log_message("Loading leave data...")
             self.leave_records = []
 
+            # Read into BytesIO to avoid format-detection issues with WPS-created files
+            file_obj.seek(0)
+            file_bytes = io.BytesIO(file_obj.read())
+
             # Check for multi-sheet workbook (new format with Master + Jan-Dec sheets)
-            xlsx = pd.ExcelFile(file_obj)
+            xlsx = pd.ExcelFile(file_bytes)
             sheet_names = xlsx.sheet_names
             month_sheets = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
@@ -342,8 +347,8 @@ class AttendanceProcessor:
                 self.log_message(f"Loaded {len(self.leave_records)} leave records from monthly sheets", 'success')
             else:
                 # Single sheet format
-                file_obj.seek(0)
-                df = read_excel_file(file_obj, filename)
+                file_bytes.seek(0)
+                df = read_excel_file(file_bytes, filename)
 
                 # Validate file
                 self.validate_leave_sheet(df)
@@ -370,7 +375,11 @@ class AttendanceProcessor:
             return True
 
         except Exception as e:
+            tb = traceback.format_exc()
+            print(f"LEAVE DATA ERROR: {str(e)}")
+            print(tb)
             self.log_message(f"Error loading leave data: {str(e)}", 'error')
+            self.log_message(f"Traceback: {tb}", 'error')
             return False
 
     def parse_leave_matrix(self, df):
