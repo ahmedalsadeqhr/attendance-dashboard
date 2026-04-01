@@ -432,6 +432,7 @@ class AttendanceProcessor:
         crm_values = df[crm_col].astype(str).str.strip()
 
         for idx, crm in enumerate(crm_values):
+            crm = str(crm).strip()
             if not crm or crm == 'nan' or crm.lower() == 'crm':
                 continue
 
