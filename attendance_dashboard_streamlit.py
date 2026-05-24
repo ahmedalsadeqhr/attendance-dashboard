@@ -346,29 +346,44 @@ class AttendanceProcessor:
 
                 self.log_message(f"Loaded {len(self.leave_records)} leave records from monthly sheets", 'success')
             else:
-                # Single sheet format
+                # Single sheet format — try iTalent HR export format first (row 0 is a label row)
                 file_bytes.seek(0)
-                df = read_excel_file(file_bytes, filename)
-
-                # Validate file
-                self.validate_leave_sheet(df)
-
-                # Detect format (matrix vs vertical)
-                has_date_columns = any(
-                    isinstance(col, datetime) or
-                    hasattr(col, 'date') or
-                    ('-' in str(col) and any(month in str(col).lower() for month in
-                                             ['jan', 'feb', 'mar', 'apr', 'may', 'jun',
-                                              'jul', 'aug', 'sep', 'oct', 'nov', 'dec']))
-                    for col in df.columns
+                df_probe = pd.read_excel(file_bytes, nrows=2, skiprows=1)
+                cols_lower = {str(c).strip().lower() for c in df_probe.columns}
+                is_italent_format = (
+                    'approval status' in cols_lower and
+                    'employee id' in cols_lower and
+                    'start time' in cols_lower
                 )
 
-                if has_date_columns:
-                    self.log_message("Detected matrix format (dates as columns)")
-                    self.parse_leave_matrix(df)
+                if is_italent_format:
+                    self.log_message("Detected iTalent HR export format")
+                    file_bytes.seek(0)
+                    df = pd.read_excel(file_bytes, skiprows=1)
+                    self.parse_leave_italent_format(df)
                 else:
-                    self.log_message("Detected vertical format")
-                    self.parse_leave_vertical(df)
+                    file_bytes.seek(0)
+                    df = read_excel_file(file_bytes, filename)
+
+                    # Validate file
+                    self.validate_leave_sheet(df)
+
+                    # Detect format (matrix vs vertical)
+                    has_date_columns = any(
+                        isinstance(col, datetime) or
+                        hasattr(col, 'date') or
+                        ('-' in str(col) and any(month in str(col).lower() for month in
+                                                 ['jan', 'feb', 'mar', 'apr', 'may', 'jun',
+                                                  'jul', 'aug', 'sep', 'oct', 'nov', 'dec']))
+                        for col in df.columns
+                    )
+
+                    if has_date_columns:
+                        self.log_message("Detected matrix format (dates as columns)")
+                        self.parse_leave_matrix(df)
+                    else:
+                        self.log_message("Detected vertical format")
+                        self.parse_leave_vertical(df)
 
                 self.log_message(f"Loaded {len(self.leave_records)} leave records", 'success')
 
@@ -381,6 +396,89 @@ class AttendanceProcessor:
             self.log_message(f"Error loading leave data: {str(e)}", 'error')
             self.log_message(f"Traceback: {tb}", 'error')
             return False
+
+    def _parse_italent_datetime(self, value):
+        """Parse iTalent date values, including half-day strings like '2026/05/14 First half day'."""
+        if pd.isna(value):
+            return None
+        if isinstance(value, (datetime, pd.Timestamp)):
+            return pd.Timestamp(value)
+        s = str(value).replace('\xa0', ' ').strip()
+        # Try standard parsing first
+        try:
+            return pd.to_datetime(s)
+        except Exception:
+            pass
+        # Half-day format: "YYYY/MM/DD First half day" or "YYYY/MM/DD Second half day"
+        date_part = s.split(' ')[0]
+        try:
+            return pd.to_datetime(date_part)
+        except Exception:
+            return None
+
+    def parse_leave_italent_format(self, df):
+        """Parse iTalent HR leave export (row-per-request, date range, Approval Status filter).
+
+        Columns used: Employee ID, Start Time, End Time, Leave Project, Approval Status.
+        Only records with Approval Status == 'Passed' are loaded.
+        Employee ID is matched against employee_mapping (AC-No / PS ID) to resolve CRM.
+        Date ranges are expanded into individual calendar days; off-day filtering happens
+        later in fill_leave_records.
+        """
+        # Normalise column names to be case/whitespace insensitive
+        df.columns = [str(c).strip() for c in df.columns]
+
+        required = {'Approval Status', 'Employee ID', 'Start Time', 'End Time'}
+        missing = required - set(df.columns)
+        if missing:
+            self.log_message(f"iTalent leave sheet missing columns: {missing}", 'warning')
+            return
+
+        # Build a lookup: normalised employee ID -> CRM
+        id_to_crm = {ac_no: info['crm'] for ac_no, info in self.employee_mapping.items() if info.get('crm')}
+
+        passed_df = df[df['Approval Status'] == 'Passed'].copy()
+        self.log_message(f"iTalent leave: {len(passed_df)} Passed records out of {len(df)} total")
+
+        skipped_no_match = 0
+        skipped_bad_date = 0
+        added = 0
+
+        for _, row in passed_df.iterrows():
+            emp_id = self.normalize_id(row['Employee ID'])
+            crm = id_to_crm.get(emp_id)
+            if not crm:
+                skipped_no_match += 1
+                continue
+
+            try:
+                start_dt = self._parse_italent_datetime(row['Start Time'])
+                end_dt = self._parse_italent_datetime(row['End Time'])
+                if start_dt is None or end_dt is None:
+                    skipped_bad_date += 1
+                    continue
+            except Exception:
+                skipped_bad_date += 1
+                continue
+
+            leave_type = str(row.get('Leave Project', 'Leave')).strip() or 'Leave'
+
+            # Expand date range day by day (off-day filtering done in fill_leave_records)
+            current = start_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+            end_day = end_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+            while current <= end_day:
+                self.leave_records.append({
+                    'crm': crm,
+                    'date': current,
+                    'leave_type': leave_type,
+                })
+                added += 1
+                current += timedelta(days=1)
+
+        if skipped_no_match:
+            self.log_message(f"iTalent leave: {skipped_no_match} records skipped (no matching employee ID in master)", 'warning')
+        if skipped_bad_date:
+            self.log_message(f"iTalent leave: {skipped_bad_date} records skipped (invalid date)", 'warning')
 
     def parse_leave_matrix(self, df):
         """Parse leave data in matrix format - optimized for performance.
