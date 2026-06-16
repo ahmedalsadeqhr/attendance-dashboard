@@ -865,12 +865,14 @@ class AttendanceProcessor:
                     record_date = file_date
                     if date_col and pd.notna(row[date_col]):
                         try:
-                            record_date = pd.to_datetime(row[date_col])
-                            if hasattr(record_date, 'to_pydatetime'):
-                                record_date = record_date.to_pydatetime()
+                            parsed = pd.to_datetime(row[date_col])
+                            if hasattr(parsed, 'to_pydatetime'):
+                                parsed = parsed.to_pydatetime()
+                            # Reject implausible dates (epoch zero from blank/zero cells)
+                            if parsed.year >= 2000:
+                                record_date = parsed
                         except Exception as e:
                             self.log_message(f"Could not parse date in row {idx} of '{filename}': {e}", 'warning')
-                            record_date = file_date
 
                     clock_in = self.get_first_clock_in(row)
                     clock_out = self.get_last_clock_out(row)
