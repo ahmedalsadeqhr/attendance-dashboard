@@ -60,6 +60,7 @@ class AttendanceProcessor:
         self.employee_mapping = {}
         self.crm_to_info = {}
         self.leave_records = []
+        self.pending_failed_leaves = {}  # {(crm, date): "Leave Type (Pending|Failed)"}
         self.processed_data = []
         self.conflict_records = []
         self.penalties_data = {}
@@ -461,24 +462,93 @@ class AttendanceProcessor:
                 skipped_bad_date += 1
                 continue
 
-            leave_type = str(row.get('Leave Project', 'Leave')).strip() or 'Leave'
+            # Resolve leave type — Leave Project is NaN for some iTalent rows
+            leave_project_raw = row.get('Leave Project', '')
+            leave_type_base = (
+                str(leave_project_raw).strip()
+                if pd.notna(leave_project_raw) and str(leave_project_raw).strip().lower() != 'nan'
+                else ''
+            )
+
+            # Parse duration field to detect hours / present / fractional days
+            duration_raw = str(row.get('Total Duration of Leave', '')).strip()
+            is_hours = 'hour' in duration_raw.lower()
+            is_present = duration_raw.lower() == 'present'
+
+            if is_hours:
+                leave_type_base = '2 Hour Excuse'
+            elif is_present:
+                leave_type_base = 'Normal'
+            elif not leave_type_base:
+                leave_type_base = 'Leave'
+
+            # Detect fractional duration (e.g. "1.5 Day(s)", "0.5 Day(s)")
+            duration_match = re.search(r'([\d.]+)\s*day', duration_raw, re.IGNORECASE)
+            duration_days = float(duration_match.group(1)) if duration_match else None
+            is_fractional = duration_days is not None and (duration_days % 1) != 0
 
             # Expand date range day by day (off-day filtering done in fill_leave_records)
             current = start_dt.replace(hour=0, minute=0, second=0, microsecond=0)
             end_day = end_dt.replace(hour=0, minute=0, second=0, microsecond=0)
-            while current <= end_day:
+
+            # Collect all days first so we can mark the last one as (HD) if fractional
+            day_list = []
+            c = current
+            while c <= end_day:
+                day_list.append(c)
+                c += timedelta(days=1)
+
+            for i, day in enumerate(day_list):
+                is_last = (i == len(day_list) - 1)
+                # Last calendar day of a fractional-duration leave is a half day
+                if is_fractional and is_last and leave_type_base not in ('2 Hour Excuse', 'Normal'):
+                    leave_type = leave_type_base + ' (HD)'
+                else:
+                    leave_type = leave_type_base
                 self.leave_records.append({
                     'crm': crm,
-                    'date': current,
+                    'date': day,
                     'leave_type': leave_type,
                 })
                 added += 1
-                current += timedelta(days=1)
 
         if skipped_no_match:
             self.log_message(f"iTalent leave: {skipped_no_match} records skipped (no matching employee ID in master)", 'warning')
         if skipped_bad_date:
             self.log_message(f"iTalent leave: {skipped_bad_date} records skipped (invalid date)", 'warning')
+
+        # Build pending/failed lookup for absent-day labelling (Pending takes priority over Failed)
+        self.pending_failed_leaves = {}
+        for approval_status in ('Pending', 'Failed'):
+            subset = df[df['Approval Status'] == approval_status]
+            for _, row in subset.iterrows():
+                emp_id = self.normalize_id(row['Employee ID'])
+                crm = id_to_crm.get(emp_id)
+                if not crm:
+                    continue
+                try:
+                    start_dt = self._parse_italent_datetime(row['Start Time'])
+                    end_dt = self._parse_italent_datetime(row['End Time'])
+                    if start_dt is None or end_dt is None:
+                        continue
+                except Exception:
+                    continue
+                leave_project_raw = row.get('Leave Project', '')
+                lt = (
+                    str(leave_project_raw).strip()
+                    if pd.notna(leave_project_raw) and str(leave_project_raw).strip().lower() != 'nan'
+                    else 'Leave'
+                ) or 'Leave'
+                label = f"{lt} ({approval_status})"
+                c = start_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+                end_day = end_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+                while c <= end_day:
+                    key = (crm, c.date())
+                    # Pending wins: only write if key is absent or currently holds a Failed label
+                    if key not in self.pending_failed_leaves or approval_status == 'Pending':
+                        self.pending_failed_leaves[key] = label
+                    c += timedelta(days=1)
+        self.log_message(f"iTalent leave: {len(self.pending_failed_leaves)} pending/failed absence labels built")
 
     def parse_leave_matrix(self, df):
         """Parse leave data in matrix format - optimized for performance.
@@ -963,6 +1033,19 @@ class AttendanceProcessor:
             self.log_message(f"Detected {len(self.conflict_records)} leave vs attendance conflicts", 'warning')
         self.log_message(f"Total records: {len(self.processed_data)}")
 
+        # Label Absent days that have a Pending/Failed leave request
+        if self.pending_failed_leaves:
+            relabelled = 0
+            for idx, record in enumerate(self.processed_data):
+                if record['status'] == 'Absent':
+                    key = (record['crm'], record['date'].date())
+                    label = self.pending_failed_leaves.get(key)
+                    if label:
+                        self.processed_data[idx]['status'] = label
+                        relabelled += 1
+            if relabelled:
+                self.log_message(f"Relabelled {relabelled} Absent records with Pending/Failed leave requests", 'warning')
+
     def calculate_penalties(self):
         """Calculate penalties per employee based on attendance policy -"""
         self.log_message("Calculating penalties...")
@@ -1114,12 +1197,21 @@ class AttendanceProcessor:
         # Red - Absent / No Show
         elif status in ['Absent', 'No Show']:
             cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')
+        # Light orange - Absent with a Pending leave request (still penalised)
+        elif status.endswith('(Pending)'):
+            cell.fill = PatternFill(start_color='FCE4D6', end_color='FCE4D6', fill_type='solid')
+        # Light red - Absent with a Failed leave request (still penalised)
+        elif status.endswith('(Failed)'):
+            cell.fill = PatternFill(start_color='F4CCCC', end_color='F4CCCC', fill_type='solid')
         # Pink - Missing Punch types
         elif 'Missing Punch' in status:
             cell.fill = PatternFill(start_color='FFD9E6', end_color='FFD9E6', fill_type='solid')
-        # Light Blue - Leave types with deduction
-        elif status in ['Sick Leave', 'Unpaid Leave', 'Unpaid leave']:
+        # Light Blue - Leave types with deduction (including half-day variants)
+        elif status in ['Sick Leave', 'Unpaid Leave', 'Unpaid leave', 'Sick Leave (HD)', 'Unpaid Leave (HD)']:
             cell.fill = PatternFill(start_color='BDD7EE', end_color='BDD7EE', fill_type='solid')
+        # Light Green - 2 Hour Excuse (treated as excused, no deduction)
+        elif status == '2 Hour Excuse':
+            cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')
         # Orange - Half day / Early departure / Early Leave (HD)
         elif status in ['Early Departure', 'Half Day', 'Early Leave (HD)', 'Early Leave (HD) (BD)']:
             cell.fill = PatternFill(start_color='FCE4D6', end_color='FCE4D6', fill_type='solid')
@@ -1205,7 +1297,12 @@ class AttendanceProcessor:
             "Half Day (BD)", "Early Leave (HD) (BD)", "Early Departure (BD)", "Marriage Leave (BD)",
             "Paternity Leave (BD)", "Maternity Leave (BD)", "Bereavement Leave (BD)",
             # Refund variants - reversal of previous penalties
-            "Annual Leave (Refund)", "Sick Leave (Refund)", "Half Day (Refund)"
+            "Annual Leave (Refund)", "Sick Leave (Refund)", "Half Day (Refund)",
+            # Half-day variants from iTalent (counted as 0.5 in penalties)
+            "Annual Leave (HD)", "Sick Leave (HD)", "Unpaid Leave (HD)",
+            "Casual Leave (HD)", "Bereavement Leave (HD)",
+            # Hour-based excuses and present override
+            "2 Hour Excuse"
         ]
 
         justification_list = ",".join(justification_options)
@@ -1628,9 +1725,9 @@ class AttendanceProcessor:
             # Column K: Punch Deduction (negative)
             ws.cell(data_row, 11, f"=-IF(J{data_row}>{missing_threshold},(J{data_row}-{missing_threshold})*{missing_deduction_rate},0)")
 
-            # Column L: Absences
+            # Column L: Absences (includes Pending/Failed leave requests — same penalty as Absent)
             if sr:
-                ws.cell(data_row, 12, f'=COUNTIF({rng},"Absent")+COUNTIF({rng},"No Show")')
+                ws.cell(data_row, 12, f'=COUNTIF({rng},"Absent")+COUNTIF({rng},"No Show")+COUNTIF({rng},"*(Pending)")+COUNTIF({rng},"*(Failed)")')
             else:
                 ws.cell(data_row, 12, data['absence_count'])
 
@@ -1668,18 +1765,18 @@ class AttendanceProcessor:
             else:
                 ws.cell(data_row, 17, f"=-P{data_row}*{half_day_deduction}")
 
-            # Column R: Sick Leave Count
+            # Column R: Sick Leave Count (full days + BD + 0.5 weight for HD half-days)
             if sr:
-                ws.cell(data_row, 18, f'=COUNTIF({rng},"Sick Leave")+COUNTIF({rng},"Sick Leave (BD)")')
+                ws.cell(data_row, 18, f'=COUNTIF({rng},"Sick Leave")+COUNTIF({rng},"Sick Leave (BD)")+0.5*COUNTIF({rng},"Sick Leave (HD)")')
             else:
                 ws.cell(data_row, 18, 0)
 
             # Column S: Sick Leave Deduction (negative)
             ws.cell(data_row, 19, f"=-R{data_row}*{sick_leave_deduction}")
 
-            # Column T: Unpaid Leave Count
+            # Column T: Unpaid Leave Count (full days + BD + 0.5 weight for HD half-days)
             if sr:
-                ws.cell(data_row, 20, f'=COUNTIF({rng},"Unpaid Leave")+COUNTIF({rng},"Unpaid Leave (BD)")')
+                ws.cell(data_row, 20, f'=COUNTIF({rng},"Unpaid Leave")+COUNTIF({rng},"Unpaid Leave (BD)")+0.5*COUNTIF({rng},"Unpaid Leave (HD)")')
             else:
                 ws.cell(data_row, 20, 0)
 
