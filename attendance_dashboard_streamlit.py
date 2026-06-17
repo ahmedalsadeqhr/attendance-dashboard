@@ -500,8 +500,10 @@ class AttendanceProcessor:
 
             for i, day in enumerate(day_list):
                 is_last = (i == len(day_list) - 1)
-                # Last calendar day of a fractional-duration leave is a half day
-                if is_fractional and is_last and leave_type_base not in ('2 Hour Excuse', 'Normal'):
+                # Last calendar day of a fractional-duration leave is a half day.
+                # Skip (HD) suffix for generic 'Leave' fallback — the type is unknown
+                # so we can't create a meaningful half-day variant; it stays as 'Leave'.
+                if is_fractional and is_last and leave_type_base not in ('2 Hour Excuse', 'Normal', 'Leave'):
                     leave_type = leave_type_base + ' (HD)'
                 else:
                     leave_type = leave_type_base
@@ -1191,7 +1193,8 @@ class AttendanceProcessor:
         # Green - No deduction statuses
         elif status in ['Normal', 'Present', 'Late (Approved)', 'Annual Leave', 'Casual Leave',
                         'Marriage Leave', 'Paternity Leave', 'Maternity Leave', 'Bereavement Leave',
-                        'Military Call Leave', 'Early Departure (Approved)']:
+                        'Military Call Leave', 'Early Departure (Approved)',
+                        'Continuing Education Leave', 'Leave']:
             cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')
         # Yellow - Late with deduction
         elif status == 'Late':
@@ -1294,6 +1297,7 @@ class AttendanceProcessor:
             "Early Departure (Approved)", "Early Departure", "Half Day", "Early Leave (HD)",
             "Sick Leave", "Annual Leave", "Casual Leave", "Marriage Leave", "Paternity Leave",
             "Maternity Leave", "Bereavement Leave", "Military Call Leave", "Unpaid Leave",
+            "Continuing Education Leave", "Leave",
             "Weekend", "Departed",
             "Annual Leave (BD)", "Casual Leave (BD)", "Sick Leave (BD)", "Unpaid Leave (BD)",
             "Half Day (BD)", "Early Leave (HD) (BD)", "Early Departure (BD)", "Marriage Leave (BD)",
@@ -1302,7 +1306,7 @@ class AttendanceProcessor:
             "Annual Leave (Refund)", "Sick Leave (Refund)", "Half Day (Refund)",
             # Half-day variants from iTalent (counted as 0.5 in penalties)
             "Annual Leave (HD)", "Sick Leave (HD)", "Unpaid Leave (HD)",
-            "Casual Leave (HD)", "Bereavement Leave (HD)",
+            "Casual Leave (HD)", "Bereavement Leave (HD)", "Continuing Education Leave (HD)",
             # Hour-based excuses and present override
             "2 Hour Excuse"
         ]
@@ -1747,7 +1751,7 @@ class AttendanceProcessor:
 
             # Column P: Half Day Count
             if sr:
-                ws.cell(data_row, 16, f'=COUNTIF({rng},"Half Day")+COUNTIF({rng},"Half Day (BD)")+COUNTIF({rng},"Early Leave (HD)")+COUNTIF({rng},"Early Leave (HD) (BD)")')
+                ws.cell(data_row, 16, f'=COUNTIF({rng},"Half Day")+COUNTIF({rng},"Half Day (BD)")+COUNTIF({rng},"Early Leave (HD)")+COUNTIF({rng},"Early Leave (HD) (BD)")+COUNTIF({rng},"Continuing Education Leave (HD)")')
             else:
                 ws.cell(data_row, 16, 0)
 
