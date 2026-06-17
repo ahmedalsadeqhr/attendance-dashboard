@@ -474,6 +474,19 @@ class AttendanceProcessor:
             duration_raw = str(row.get('Total Duration of Leave', '')).strip()
             is_hours = 'hour' in duration_raw.lower()
             is_present = duration_raw.lower() == 'present'
+            # Skip rows whose duration is an attendance status, not a leave duration
+            # (e.g. 'No Show' — these are iTalent audit records, not approved leaves)
+            duration_match_check = re.search(r'[\d.]+\s*(?:day|hour)', duration_raw, re.IGNORECASE)
+            is_non_leave_duration = (
+                not is_hours and not is_present and duration_match_check is None
+                and duration_raw not in ('', 'nan')
+            )
+            if is_non_leave_duration:
+                self.log_message(
+                    f"iTalent leave: skipped row with unrecognised duration '{duration_raw}' "
+                    f"(Employee ID {row.get('Employee ID', '?')})", 'warning'
+                )
+                continue
 
             if is_hours:
                 leave_type_base = '2 Hour Excuse'
