@@ -480,7 +480,8 @@ class AttendanceProcessor:
             elif is_present:
                 leave_type_base = 'Normal'
             elif not leave_type_base:
-                leave_type_base = 'Leave'
+                # iTalent rows with no Leave Project default to Annual Leave
+                leave_type_base = 'Annual Leave'
 
             # Detect fractional duration (e.g. "1.5 Day(s)", "0.5 Day(s)")
             duration_match = re.search(r'([\d.]+)\s*day', duration_raw, re.IGNORECASE)
@@ -500,10 +501,8 @@ class AttendanceProcessor:
 
             for i, day in enumerate(day_list):
                 is_last = (i == len(day_list) - 1)
-                # Last calendar day of a fractional-duration leave is a half day.
-                # Skip (HD) suffix for generic 'Leave' fallback — the type is unknown
-                # so we can't create a meaningful half-day variant; it stays as 'Leave'.
-                if is_fractional and is_last and leave_type_base not in ('2 Hour Excuse', 'Normal', 'Leave'):
+                # Last calendar day of a fractional-duration leave is a half day
+                if is_fractional and is_last and leave_type_base not in ('2 Hour Excuse', 'Normal'):
                     leave_type = leave_type_base + ' (HD)'
                 else:
                     leave_type = leave_type_base
@@ -1194,7 +1193,7 @@ class AttendanceProcessor:
         elif status in ['Normal', 'Present', 'Late (Approved)', 'Annual Leave', 'Casual Leave',
                         'Marriage Leave', 'Paternity Leave', 'Maternity Leave', 'Bereavement Leave',
                         'Military Call Leave', 'Early Departure (Approved)',
-                        'Continuing Education Leave', 'Leave']:
+                        'Continuing Education Leave']:
             cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')
         # Yellow - Late with deduction
         elif status == 'Late':
@@ -1297,7 +1296,7 @@ class AttendanceProcessor:
             "Early Departure (Approved)", "Early Departure", "Half Day", "Early Leave (HD)",
             "Sick Leave", "Annual Leave", "Casual Leave", "Marriage Leave", "Paternity Leave",
             "Maternity Leave", "Bereavement Leave", "Military Call Leave", "Unpaid Leave",
-            "Continuing Education Leave", "Leave",
+            "Continuing Education Leave",
             "Weekend", "Departed",
             "Annual Leave (BD)", "Casual Leave (BD)", "Sick Leave (BD)", "Unpaid Leave (BD)",
             "Half Day (BD)", "Early Leave (HD) (BD)", "Early Departure (BD)", "Marriage Leave (BD)",
