@@ -531,9 +531,11 @@ class AttendanceProcessor:
         if skipped_bad_date:
             self.log_message(f"iTalent leave: {skipped_bad_date} records skipped (invalid date)", 'warning')
 
-        # Build pending/failed lookup for absent-day labelling (Pending takes priority over Failed)
+        # Build pending/failed/returned lookup for absent-day labelling.
+        # Iterate low -> high priority so the later (higher-priority) write wins:
+        # Pending > Failed > Returned for the same employee/day.
         self.pending_failed_leaves = {}
-        for approval_status in ('Pending', 'Failed'):
+        for approval_status in ('Returned', 'Failed', 'Pending'):
             subset = df[df['Approval Status'] == approval_status]
             for _, row in subset.iterrows():
                 emp_id = self.normalize_id(row['Employee ID'])
@@ -551,18 +553,17 @@ class AttendanceProcessor:
                 lt = (
                     str(leave_project_raw).strip()
                     if pd.notna(leave_project_raw) and str(leave_project_raw).strip().lower() != 'nan'
-                    else 'Leave'
-                ) or 'Leave'
+                    else 'Annual Leave'
+                ) or 'Annual Leave'
                 label = f"{lt} ({approval_status})"
                 c = start_dt.replace(hour=0, minute=0, second=0, microsecond=0)
                 end_day = end_dt.replace(hour=0, minute=0, second=0, microsecond=0)
                 while c <= end_day:
                     key = (crm, c.date())
-                    # Pending wins: only write if key is absent or currently holds a Failed label
-                    if key not in self.pending_failed_leaves or approval_status == 'Pending':
-                        self.pending_failed_leaves[key] = label
+                    # Higher-priority status (later in the loop order) overwrites
+                    self.pending_failed_leaves[key] = label
                     c += timedelta(days=1)
-        self.log_message(f"iTalent leave: {len(self.pending_failed_leaves)} pending/failed absence labels built")
+        self.log_message(f"iTalent leave: {len(self.pending_failed_leaves)} pending/failed/returned absence labels built")
 
     def parse_leave_matrix(self, df):
         """Parse leave data in matrix format - optimized for performance.
@@ -1220,6 +1221,9 @@ class AttendanceProcessor:
         # Light red - Absent with a Failed leave request (still penalised)
         elif status.endswith('(Failed)'):
             cell.fill = PatternFill(start_color='F4CCCC', end_color='F4CCCC', fill_type='solid')
+        # Light yellow - Absent with a Returned leave request (still penalised)
+        elif status.endswith('(Returned)'):
+            cell.fill = PatternFill(start_color='FFF2CC', end_color='FFF2CC', fill_type='solid')
         # Pink - Missing Punch types
         elif 'Missing Punch' in status:
             cell.fill = PatternFill(start_color='FFD9E6', end_color='FFD9E6', fill_type='solid')
@@ -1408,7 +1412,12 @@ class AttendanceProcessor:
                 elif exit_dt and date_val > exit_dt:
                     status = "Departed"
                 elif not status:
-                    status = "Absent"
+                    # Synthesized Absent day — if a Pending/Failed/Returned leave
+                    # request covers it, show the leave type + status instead.
+                    # Penalties still count these as Absent (COUNTIF on *(Pending)
+                    # / *(Failed) / *(Returned) in create_penalties_sheet).
+                    label = self.pending_failed_leaves.get((crm, date_val))
+                    status = label if label else "Absent"
 
                 # Map old values
                 status_mapping = {'Present': 'Normal'}
@@ -1745,7 +1754,7 @@ class AttendanceProcessor:
 
             # Column L: Absences (includes Pending/Failed leave requests — same penalty as Absent)
             if sr:
-                ws.cell(data_row, 12, f'=COUNTIF({rng},"Absent")+COUNTIF({rng},"No Show")+COUNTIF({rng},"*(Pending)")+COUNTIF({rng},"*(Failed)")')
+                ws.cell(data_row, 12, f'=COUNTIF({rng},"Absent")+COUNTIF({rng},"No Show")+COUNTIF({rng},"*(Pending)")+COUNTIF({rng},"*(Failed)")+COUNTIF({rng},"*(Returned)")')
             else:
                 ws.cell(data_row, 12, data['absence_count'])
 
